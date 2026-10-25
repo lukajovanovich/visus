@@ -87,7 +87,7 @@ Right now Visus is built as a **desktop web app** (sidebar layout, mobile only n
 
 ## Web app (this repo)
 - `public/` – static files only, deployable to any static host. Cream background, green accents.
-  - `index.html` – the web app shell (code in `public/app/`, vanilla JS ES modules, no build step). The site's home page **is the diary**: guests can fill in an entry; on save they must sign up/log in, go through consent (onboarding), and only then the entry is inserted (`resumePending()`; until then it waits in localStorage `visus.pendingEntry`, never sent before consent).
+  - `index.html` – the web app shell (code in `public/app/`, vanilla JS ES modules, no build step). Guests see the **same app** (sidebar, Home with today's slots, entry form) over an empty `GUEST_VIEW`; other pages (Istorija, Trendovi, …) send them to login. A guest can fill in an entry; on save they must sign up/log in, go through consent (onboarding), and only then the entry is inserted (`resumePending()`; until then it waits in localStorage `visus.pendingEntry`, never sent before consent).
   - `o-aplikaciji.html` – former landing page (features, privacy, mobile-app waitlist). `privacy.html`, `terms.html`.
   - `app/index.html` + `app/redirect.js` – old `/app/` URL redirects to `/` keeping `?code=` and `#route`.
 - `public/config.js` – Supabase URL + anon key, `GOOGLE_LOGIN` flag.

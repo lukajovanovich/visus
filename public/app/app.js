@@ -173,10 +173,13 @@ function relDay(key) {
 const sevColor = (sev) => `var(--s${Math.min(5, Math.max(1, Math.round(sev)))})`;
 const entrySeverity = (e) => METRICS.reduce((sum, m) => sum + severity(m, e.scores[m.key]), 0) / METRICS.length;
 const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-const findEntry = (date, period) => state?.entries.find((e) => e.date === date && e.period === period);
-const entriesOn = (date) => state?.entries.filter((e) => e.date === date) || [];
+// Gost vidi isti interfejs kao korisnik, nad praznim (nesačuvanim) nalogom.
+const GUEST_VIEW = { user: { id: null, name: '', email: '' }, entries: [], redemptions: [], research: { optIn: false } };
+const view = () => state || GUEST_VIEW;
+const findEntry = (date, period) => view().entries.find((e) => e.date === date && e.period === period);
+const entriesOn = (date) => view().entries.filter((e) => e.date === date);
 const periodOf = (key) => PERIODS.find((p) => p.key === key);
-const stats = () => computeStats(state.entries, todayKey(), state.research.optIn);
+const stats = () => computeStats(view().entries, todayKey(), view().research.optIn);
 
 function toast(msg) {
   const t = $('#toast');
@@ -244,13 +247,18 @@ function render() {
   if (!sb) return renderSetup();
   const { path, params } = parseHash();
 
-  // Gost (neprijavljen) vidi dnevnik i prijavu; sve ostalo traži nalog.
-  if (!state) { if (path !== '/login' && path !== '/log') return go('/log'); }
+  // Gost (neprijavljen) vidi početnu i unos; ostale strane traže prijavu.
+  if (!state) {
+    if (!['/home', '/log', '/login'].includes(path)) {
+      if (ROUTES[path]) ui.authMsg = { ok: true, text: 'Prijavite se da biste videli ovu stranu.' };
+      return go(ROUTES[path] ? '/login' : '/home');
+    }
+  }
   else if (!state.onboarded) { if (path !== '/onboarding') return go('/onboarding'); }
   else if (state.consent?.version !== CONSENT_VERSION) { if (path !== '/reconsent') return go('/reconsent'); }
   else if (GATE.includes(path) || !ROUTES[path]) return go('/home');
 
-  const bare = GATE.includes(path) || !state;
+  const bare = GATE.includes(path);
   $('#layout').classList.toggle('bare', bare);
   $('#sidebar').innerHTML = bare ? '' : renderSidebar(path);
   $('#app').innerHTML = bare ? ROUTES[path](params) : `<div class="page">${ROUTES[path](params)}</div>`;
@@ -260,19 +268,26 @@ function render() {
 }
 
 function renderSidebar(path) {
-  const u = state.user;
-  const initial = (u.name || u.email || '?').trim()[0].toUpperCase();
+  const foot = state ? (() => {
+    const u = state.user;
+    const initial = (u.name || u.email || '?').trim()[0].toUpperCase();
+    return `
+      <div class="avatar">${esc(initial)}</div>
+      <div class="who"><div><strong>${esc(u.name || 'Bez imena')}</strong></div><div class="small muted">${esc(u.email)}</div></div>
+      <button class="icon-btn" title="Odjavi se" aria-label="Odjavi se" data-action="logout">⎋</button>`;
+  })() : `
+      <div class="guest-foot">
+        <button class="btn btn-primary btn-sm" data-action="go-signup">Napravi nalog</button>
+        <button class="btn btn-ghost btn-sm" data-action="go-login">Prijava</button>
+        <a class="small muted" href="o-aplikaciji">O aplikaciji</a>
+      </div>`;
   return `
     <a class="brand" href="#/home"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
     <button class="btn btn-primary nav-cta" data-action="new-entry">+ Novi unos</button>
     <nav class="nav">
       ${NAV.map((n) => `<a href="#${n.path}" class="${n.path === path ? 'on' : ''}"><span class="ni">${n.icon}</span>${n.label}</a>`).join('')}
     </nav>
-    <div class="sidebar-foot">
-      <div class="avatar">${esc(initial)}</div>
-      <div class="who"><div><strong>${esc(u.name || 'Bez imena')}</strong></div><div class="small muted">${esc(u.email)}</div></div>
-      <button class="icon-btn" title="Odjavi se" aria-label="Odjavi se" data-action="logout">⎋</button>
-    </div>`;
+    <div class="sidebar-foot">${foot}</div>`;
 }
 
 function renderSetup() {
@@ -347,7 +362,7 @@ function renderLogin() {
     </div>
     <div class="auth-form">
       <div class="auth-card">
-        <button class="link-btn small" style="margin-bottom:18px" data-action="go-guest-log">← Nazad na dnevnik</button>
+        <button class="link-btn small" style="margin-bottom:18px" data-action="go-guest-log">← Nazad</button>
         ${forms[tab]}
         ${GOOGLE_LOGIN && tab !== 'forgot' ? `
           <div class="divider">ili</div>
@@ -572,10 +587,10 @@ function renderHome() {
   const t = todayKey();
   const hour = new Date().getHours();
   const greeting = hour < 11 ? 'Dobro jutro' : hour < 18 ? 'Dobar dan' : 'Dobro veče';
-  const name = state.user.name ? ', ' + esc(state.user.name.split(' ')[0]) : '';
+  const name = view().user.name ? ', ' + esc(view().user.name.split(' ')[0]) : '';
   const done = PERIODS.filter((p) => findEntry(t, p.key)).length;
   const days = Array.from({ length: 14 }, (_, i) => addDays(t, i - 13));
-  const recent = [...state.entries].sort((a, b) => (b.date + b.period).localeCompare(a.date + a.period)).slice(0, 6);
+  const recent = [...view().entries].sort((a, b) => (b.date + b.period).localeCompare(a.date + a.period)).slice(0, 6);
 
   return `
     <div class="page-head">
@@ -601,7 +616,7 @@ function renderHome() {
 
         <div class="card chart">
           <div class="card-head"><h2>Poslednjih 14 dana</h2><a class="small" href="#/trends">Svi trendovi →</a></div>
-          ${state.entries.some((e) => e.date >= days[0])
+          ${view().entries.some((e) => e.date >= days[0])
             ? lineChart(dailySeries(days), days, { W: 760, H: 220 }) + legendRow()
             : '<div class="empty small">Grafikon se pojavljuje posle prvih unosa.</div>'}
         </div>
@@ -629,7 +644,8 @@ function renderHome() {
             ${BADGES.map((b) => { const got = s.badges.includes(b.id); return `<span class="badge-icon ${got ? '' : 'locked'}" tabindex="0" data-tip="${b.name}${got ? '' : ' · zaključano'}" aria-label="${b.name}">${b.icon}</span>`; }).join('')}
           </div>
         </div>
-        ${state.entries.length === 0 ? `<div class="card flat small muted">💡 Ocenjujte kako se oči osećaju <b>u tom trenutku</b>. Nema tačnih i pogrešnih odgovora, važna je redovnost.</div>` : ''}
+        ${!state ? `<div class="card flat small">👋 <b>Dobro došli!</b> <span class="muted">Dodajte prvi unos. Za čuvanje unosa potrebna je besplatna prijava.</span></div>` : ''}
+        ${view().entries.length === 0 ? `<div class="card flat small muted">💡 Ocenjujte kako se oči osećaju <b>u tom trenutku</b>. Nema tačnih i pogrešnih odgovora, važna je redovnost.</div>` : ''}
       </div>
     </div>`;
 }
@@ -642,7 +658,7 @@ function streakText(s) {
 
 function sponsorCard(s) {
   const next = MILESTONES.find((m) => m.level > s.level.n);
-  const claimable = MILESTONES.find((m) => m.level <= s.level.n && !state.redemptions.some((r) => r.milestoneId === m.id));
+  const claimable = MILESTONES.find((m) => m.level <= s.level.n && !view().redemptions.some((r) => r.milestoneId === m.id));
   let body;
   if (claimable) {
     body = `<div style="margin:8px 0 12px"><strong>🎉 Nagrada je spremna: ${claimable.title}</strong></div><a class="btn btn-sm btn-on-dark" href="#/rewards">Preuzmi nagradu</a>`;
@@ -753,15 +769,7 @@ function renderLog(params) {
   const filled = Object.keys(d.scores).length;
   const guest = !state;
 
-  const head = guest ? `
-    <header class="guest-bar">
-      <a class="brand" href="#/log"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
-      <div class="row"><a class="small" href="o-aplikaciji">O aplikaciji</a><button class="btn btn-ghost btn-sm" data-action="go-login">Prijava</button></div>
-    </header>
-    <div class="page-head">
-      <div><h1>Kako su vam oči danas?</h1>
-        <div class="sub">Ocenite pet simptoma od 1 do 5. Traje manje od 20 sekundi, bez merenja i aparata.</div></div>
-    </div>` : `
+  const head = `
     <div class="page-head">
       <div>
         <button class="link-btn small" data-action="back">← Nazad</button>
@@ -811,7 +819,7 @@ function renderLog(params) {
       </div>
     </div>`;
 
-  return guest ? `<div class="guest"><div class="page">${body}</div></div>` : body;
+  return body;
 }
 
 async function saveEntry() {
@@ -931,7 +939,7 @@ function renderHistory() {
 
 function dailySeries(days) {
   const map = {};
-  for (const e of state.entries) (map[e.date] ||= []).push(e);
+  for (const e of view().entries) (map[e.date] ||= []).push(e);
   return METRICS.filter((m) => ui.trendMetrics.has(m.key)).map((m) => ({
     metric: m,
     values: days.map((d) => (map[d] ? avg(map[d].map((e) => e.scores[m.key])) : null)),
@@ -1283,7 +1291,7 @@ function signedOut() {
   setPending(null); // npr. "Odustani" u onboardingu: bez saglasnosti se unos ne čuva
   Object.assign(ui, { onb: null, draft: null, selDate: null, calMonth: null, demoEdit: null, authTab: 'login' });
   closeModal();
-  go('/log');
+  go('/home');
 }
 
 function openLog(date, period) {
@@ -1294,10 +1302,11 @@ function openLog(date, period) {
 const actions = {
   reload() { location.reload(); },
   'go-login'() { ui.authTab = 'login'; ui.authMsg = null; go('/login'); },
+  'go-signup'() { ui.authTab = 'signup'; ui.authMsg = null; go('/login'); },
   'go-guest-log'() {
     const p = getPending();
     ui.authMsg = null;
-    go(p ? `/log?date=${p.date}&period=${p.period}` : '/log');
+    go(p ? `/log?date=${p.date}&period=${p.period}` : '/home');
   },
   'auth-tab'(el) { ui.authTab = el.dataset.tab; ui.authMsg = null; render(); },
   async 'login-google'() {

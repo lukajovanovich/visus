@@ -355,10 +355,7 @@ body.busy .btn { opacity: .7; }
 .badge-icon.locked { color: transparent; text-shadow: 0 0 0 #c9c4b5; }
 .badge-icon:focus-visible { box-shadow: 0 0 0 2px var(--primary); }
 
-/* Gost: dnevnik na početnoj strani, bez bočnog menija */
-.guest { padding: 24px 40px 64px; }
-.guest-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
-.guest-bar .brand { padding: 0; }
-.guest-bar .row a { color: var(--muted); text-decoration: none; font-weight: 600; }
-.guest-bar .row a:hover { color: var(--text); }
-@media (max-width: 860px) { .guest { padding: 16px 16px 48px; } }
+/* Gost: dno bočnog menija */
+.guest-foot { display: grid; gap: 8px; width: 100%; }
+.guest-foot a { text-align: center; text-decoration: none; margin-top: 2px; }
+.guest-foot a:hover { color: var(--text); }
