@@ -76,13 +76,23 @@ h3 { font-size: 0.95rem; margin: 0 0 4px; }
   .main-side { grid-template-columns: minmax(0, 1fr); }
   .cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Telefon: gornja traka sa ☰ dugmetom, meni se otvara ispod (jedna stavka ispod druge).
+   Na računaru se ništa ne menja – bočni meni je uvek vidljiv. */
+.sidebar .menu-toggle { display: none; }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; flex-direction: row; align-items: center; padding: 10px 12px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
-  .brand { padding: 0 8px 0 0; }
-  .brand span, .sidebar-foot, .nav-cta { display: none; }
-  .nav { display: flex; gap: 2px; }
-  .nav a { white-space: nowrap; margin: 0; }
+  .sidebar {
+    position: sticky; top: 0; z-index: 30; height: auto;
+    flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0;
+    padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--border);
+  }
+  .brand { padding: 0; }
+  .sidebar .menu-toggle { display: grid; margin-left: auto; width: 42px; height: 42px; }
+  .sidebar .nav-cta, .sidebar .nav, .sidebar .sidebar-foot { display: none; }
+  .sidebar.open { box-shadow: 0 12px 24px rgba(60, 50, 20, 0.12); padding-bottom: 14px; }
+  .sidebar.open .nav-cta { display: flex; width: 100%; margin: 14px 0 6px; }
+  .sidebar.open .nav { display: flex; flex-direction: column; width: 100%; }
+  .sidebar.open .sidebar-foot { display: flex; width: 100%; margin-top: 8px; }
   .main { padding: 20px 16px 48px; }
   .cols-2, .cols-3, .cols-4 { grid-template-columns: minmax(0, 1fr); }
 }

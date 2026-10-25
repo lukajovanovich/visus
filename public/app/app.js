@@ -39,6 +39,7 @@ const ui = {
   returnTo: null,
   afterNav: null,
   busy: false,
+  menuOpen: false,
 };
 
 /* ---------- Podaci (Supabase) ---------- */
@@ -261,6 +262,7 @@ function render() {
   const bare = GATE.includes(path);
   $('#layout').classList.toggle('bare', bare);
   $('#sidebar').innerHTML = bare ? '' : renderSidebar(path);
+  $('#sidebar').classList.toggle('open', ui.menuOpen && !bare);
   $('#app').innerHTML = bare ? ROUTES[path](params) : `<div class="page">${ROUTES[path](params)}</div>`;
 
   if (path !== lastPath) window.scrollTo(0, 0);
@@ -283,6 +285,11 @@ function renderSidebar(path) {
       </div>`;
   return `
     <a class="brand" href="#/home"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
+    <button class="icon-btn menu-toggle" data-action="toggle-menu" aria-label="Meni" aria-expanded="${ui.menuOpen}" aria-controls="sidebar">
+      ${ui.menuOpen
+        ? '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>'
+        : '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>'}
+    </button>
     <button class="btn btn-primary nav-cta" data-action="new-entry">+ Novi unos</button>
     <nav class="nav">
       ${NAV.map((n) => `<a href="#${n.path}" class="${n.path === path ? 'on' : ''}"><span class="ni">${n.icon}</span>${n.label}</a>`).join('')}
@@ -1299,8 +1306,14 @@ function openLog(date, period) {
   go(`/log?date=${date}&period=${period}`);
 }
 
+function setMenu(open) {
+  ui.menuOpen = open;
+  render();
+}
+
 const actions = {
   reload() { location.reload(); },
+  'toggle-menu'() { setMenu(!ui.menuOpen); },
   'go-login'() { ui.authTab = 'login'; ui.authMsg = null; go('/login'); },
   'go-signup'() { ui.authTab = 'signup'; ui.authMsg = null; go('/login'); },
   'go-guest-log'() {
@@ -1492,6 +1505,10 @@ function run(fn, el, e) {
 }
 
 document.addEventListener('click', (e) => {
+  if (ui.menuOpen && e.target.closest('#sidebar a, #sidebar .btn')) {
+    ui.menuOpen = false;
+    setTimeout(render, 0); // zatvori meni i kada se klikne strana na kojoj smo već
+  }
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
   const fn = actions[el.dataset.action];
@@ -1525,6 +1542,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('hashchange', () => {
+  ui.menuOpen = false;
   closeModal();
   render();
   if (ui.afterNav) { const fn = ui.afterNav; ui.afterNav = null; fn(); }
