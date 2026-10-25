@@ -173,8 +173,8 @@ function relDay(key) {
 const sevColor = (sev) => `var(--s${Math.min(5, Math.max(1, Math.round(sev)))})`;
 const entrySeverity = (e) => METRICS.reduce((sum, m) => sum + severity(m, e.scores[m.key]), 0) / METRICS.length;
 const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-const findEntry = (date, period) => state.entries.find((e) => e.date === date && e.period === period);
-const entriesOn = (date) => state.entries.filter((e) => e.date === date);
+const findEntry = (date, period) => state?.entries.find((e) => e.date === date && e.period === period);
+const entriesOn = (date) => state?.entries.filter((e) => e.date === date) || [];
 const periodOf = (key) => PERIODS.find((p) => p.key === key);
 const stats = () => computeStats(state.entries, todayKey(), state.research.optIn);
 
@@ -244,12 +244,13 @@ function render() {
   if (!sb) return renderSetup();
   const { path, params } = parseHash();
 
-  if (!state) { if (path !== '/login') return go('/login'); }
+  // Gost (neprijavljen) vidi dnevnik i prijavu; sve ostalo traži nalog.
+  if (!state) { if (path !== '/login' && path !== '/log') return go('/log'); }
   else if (!state.onboarded) { if (path !== '/onboarding') return go('/onboarding'); }
   else if (state.consent?.version !== CONSENT_VERSION) { if (path !== '/reconsent') return go('/reconsent'); }
   else if (GATE.includes(path) || !ROUTES[path]) return go('/home');
 
-  const bare = GATE.includes(path);
+  const bare = GATE.includes(path) || !state;
   $('#layout').classList.toggle('bare', bare);
   $('#sidebar').innerHTML = bare ? '' : renderSidebar(path);
   $('#app').innerHTML = bare ? ROUTES[path](params) : `<div class="page">${ROUTES[path](params)}</div>`;
@@ -331,7 +332,7 @@ function renderLogin() {
   return `
   <div class="auth">
     <div class="auth-hero">
-      <a class="brand" href="../"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
+      <a class="brand" href="o-aplikaciji"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
       <div>
         <h1>Pratite kako se vaše oči osećaju, iz dana u dan.</h1>
         <p>Tri kratka unosa dnevno. Visus pokazuje obrasce koje biste inače propustili.</p>
@@ -346,6 +347,7 @@ function renderLogin() {
     </div>
     <div class="auth-form">
       <div class="auth-card">
+        <button class="link-btn small" style="margin-bottom:18px" data-action="go-guest-log">← Nazad na dnevnik</button>
         ${forms[tab]}
         ${GOOGLE_LOGIN && tab !== 'forgot' ? `
           <div class="divider">ili</div>
@@ -410,6 +412,7 @@ function afterSignIn(user) {
   const promise = (async () => {
     ui.authMsg = null;
     await loadState(user);
+    if (await resumePending()) return;
     go(state.onboarded ? '/home' : '/onboarding');
   })();
   signInTask = { id: user.id, promise };
@@ -681,8 +684,61 @@ function defaultPeriod(date = todayKey()) {
   return PERIODS.find((p) => !findEntry(date, p.key))?.key || byTime;
 }
 
+// Unos gosta čeka u ovom pregledaču dok se korisnik ne prijavi i ne da saglasnost.
+// Ništa se ne šalje na server pre saglasnosti (GDPR).
+const PENDING_KEY = 'visus.pendingEntry';
+
+function setPending(p) {
+  try { p ? localStorage.setItem(PENDING_KEY, JSON.stringify(p)) : localStorage.removeItem(PENDING_KEY); } catch {}
+}
+
+function getPending() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PENDING_KEY));
+    if (p && Date.now() - p.savedAt < 7 * 864e5) return p;
+  } catch {}
+  setPending(null);
+  return null;
+}
+
+function guestSave() {
+  const d = ui.draft;
+  if (!METRICS.every((m) => d.scores[m.key])) return;
+  setPending({ date: d.date, period: d.period, scores: { ...d.scores }, note: d.note, savedAt: Date.now() });
+  ui.draft = null;
+  ui.authTab = 'signup';
+  ui.authMsg = { ok: true, text: 'Unos je spreman. Napravite besplatan nalog ili se prijavite da ga sačuvate.' };
+  go('/login');
+}
+
+// Posle prijave (i saglasnosti) sačuvaj unos koji je čekao. Vraća true ako je preusmerio korisnika.
+async function resumePending() {
+  if (!state?.onboarded || state.consent?.version !== CONSENT_VERSION) return false;
+  const p = getPending();
+  if (!p) return false;
+  setPending(null);
+  const existing = findEntry(p.date, p.period);
+  if (existing) {
+    ui.draft = { date: p.date, period: p.period, id: existing.id, scores: p.scores, note: p.note };
+    ui.returnTo = '/home';
+    go(`/log?date=${p.date}&period=${p.period}`);
+    toast('Za ovaj termin već imate unos. Proverite nove ocene i sačuvajte.');
+    return true;
+  }
+  const row = check(await sb.from('entries').insert({ ...p.scores, note: p.note, date: p.date, period: p.period }).select().single());
+  state.entries.push(entryFromRow(row));
+  go('/home');
+  toast(`Vaš unos je sačuvan · +${XP_PER_ENTRY} XP`);
+  return true;
+}
+
 function loadDraft(date, period) {
   const existing = findEntry(date, period);
+  const pending = !state && getPending();
+  if (pending && pending.date === date && pending.period === period) {
+    ui.draft = { date, period, id: null, scores: { ...pending.scores }, note: pending.note };
+    return;
+  }
   ui.draft = { date, period, id: existing?.id || null, scores: existing ? { ...existing.scores } : {}, note: existing?.note || '' };
 }
 
@@ -695,15 +751,30 @@ function renderLog(params) {
   const d = ui.draft;
   const complete = METRICS.every((m) => d.scores[m.key]);
   const filled = Object.keys(d.scores).length;
+  const guest = !state;
 
-  return `
+  const head = guest ? `
+    <header class="guest-bar">
+      <a class="brand" href="#/log"><img src="../assets/logo.svg" alt=""><span>Visus</span></a>
+      <div class="row"><a class="small" href="o-aplikaciji">O aplikaciji</a><button class="btn btn-ghost btn-sm" data-action="go-login">Prijava</button></div>
+    </header>
+    <div class="page-head">
+      <div><h1>Kako su vam oči danas?</h1>
+        <div class="sub">Ocenite pet simptoma od 1 do 5. Traje manje od 20 sekundi, bez merenja i aparata.</div></div>
+    </div>` : `
     <div class="page-head">
       <div>
         <button class="link-btn small" data-action="back">← Nazad</button>
         <h1 style="margin-top:6px">${d.id ? 'Izmena unosa' : 'Novi unos'}</h1>
         <div class="sub">${relDay(date)} · ${periodOf(period).emoji} ${periodOf(period).name}</div>
       </div>
-    </div>
+    </div>`;
+
+  const saveLabel = guest
+    ? (complete ? 'Sačuvaj unos' : `Ocenite svih 5 simptoma (${filled}/5)`)
+    : d.id ? 'Sačuvaj izmene' : complete ? `Sačuvaj · +${XP_PER_ENTRY} XP` : `Ocenite svih 5 simptoma (${filled}/5)`;
+
+  const body = `${head}
 
     <div class="grid main-side">
       <div class="card">
@@ -728,21 +799,23 @@ function renderLog(params) {
         <div class="field"><span>Doba dana</span>
           <div class="seg full">${PERIODS.map((p) => `<button class="${p.key === period ? 'on' : ''}" data-action="log-period" data-period="${p.key}">${p.emoji} ${p.name}</button>`).join('')}</div>
         </div>
-        ${date !== t && !d.id ? `<div class="retro-note">⏪ Naknadni unos donosi ${XP_PER_ENTRY} XP, ali se ne računa u niz uzastopnih dana.</div>` : ''}
+        ${date !== t && !d.id && !guest ? `<div class="retro-note">⏪ Naknadni unos donosi ${XP_PER_ENTRY} XP, ali se ne računa u niz uzastopnih dana.</div>` : ''}
         <label class="field">Beleška <span class="hint">opciono, vidite je samo vi</span>
           <textarea data-bind="note" data-scope="draft" maxlength="${NOTE_MAX}" placeholder="Npr. dugo za računarom, klima, nove kapi...">${esc(d.note)}</textarea>
         </label>
         <div class="card flat small muted" style="padding:12px;margin-bottom:16px">📷 <b>Fotografija oka</b> · uskoro</div>
-        <button class="btn btn-primary btn-block" data-action="save-entry" ${complete ? '' : 'disabled'}>
-          ${d.id ? 'Sačuvaj izmene' : complete ? `Sačuvaj · +${XP_PER_ENTRY} XP` : `Ocenite svih 5 simptoma (${filled}/5)`}
-        </button>
+        <button class="btn btn-primary btn-block" data-action="save-entry" ${complete ? '' : 'disabled'}>${saveLabel}</button>
+        ${guest ? '<p class="small muted" style="margin:10px 0 0">Za čuvanje je potrebna besplatna prijava. Do tada unos ostaje samo u ovom pregledaču.</p>' : ''}
         ${d.id ? `<button class="btn btn-danger btn-block" style="margin-top:10px" data-action="delete-entry" data-id="${d.id}">Obriši unos</button>` : ''}
         <div class="kbd-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> čuva unos</div>
       </div>
     </div>`;
+
+  return guest ? `<div class="guest"><div class="page">${body}</div></div>` : body;
 }
 
 async function saveEntry() {
+  if (!state) return guestSave();
   const d = ui.draft;
   if (!METRICS.every((m) => d.scores[m.key])) return;
   const before = stats();
@@ -1207,9 +1280,10 @@ function handleBind(el) {
 
 function signedOut() {
   state = null;
+  setPending(null); // npr. "Odustani" u onboardingu: bez saglasnosti se unos ne čuva
   Object.assign(ui, { onb: null, draft: null, selDate: null, calMonth: null, demoEdit: null, authTab: 'login' });
   closeModal();
-  go('/login');
+  go('/log');
 }
 
 function openLog(date, period) {
@@ -1219,6 +1293,12 @@ function openLog(date, period) {
 
 const actions = {
   reload() { location.reload(); },
+  'go-login'() { ui.authTab = 'login'; ui.authMsg = null; go('/login'); },
+  'go-guest-log'() {
+    const p = getPending();
+    ui.authMsg = null;
+    go(p ? `/log?date=${p.date}&period=${p.period}` : '/log');
+  },
   'auth-tab'(el) { ui.authTab = el.dataset.tab; ui.authMsg = null; render(); },
   async 'login-google'() {
     const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: APP_URL } });
@@ -1247,7 +1327,7 @@ const actions = {
       Notification.requestPermission().catch(() => {});
     }
     ui.onb = null;
-    go('/home');
+    if (!(await resumePending())) go('/home');
   },
   choice(el) {
     const target = demoTarget(el.dataset.scope);
@@ -1268,7 +1348,7 @@ const actions = {
     await updateProfile({ consent_version: CONSENT_VERSION });
     await reloadConsents();
     toast('Hvala!');
-    go('/home');
+    if (!(await resumePending())) go('/home');
   },
   'new-entry'() { openLog(todayKey(), defaultPeriod()); },
   'open-log'(el) { openLog(el.dataset.date, el.dataset.period); },
@@ -1451,6 +1531,7 @@ window.addEventListener('hashchange', () => {
     if (location.search) history.replaceState(null, '', location.pathname + location.hash);
     if (session) await loadState(session.user);
     render();
+    if (state) await resumePending().catch(handleError); // npr. povratak sa Google prijave
     checkReminders();
 
     sb.auth.onAuthStateChange((event, s) => {

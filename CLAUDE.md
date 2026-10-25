@@ -86,7 +86,10 @@ All metrics are **subjective only** — no clinical measurements (patients canno
 Right now Visus is built as a **desktop web app** (sidebar layout, mobile only needs to not break) on **Supabase**, as a demo. Native iOS/Android is decided later.
 
 ## Web app (this repo)
-- `public/` – static files only, deployable to any static host. Landing (`index.html`), `privacy.html`, `terms.html`, web app in `public/app/` (vanilla JS ES modules, no build step). Cream background, green accents.
+- `public/` – static files only, deployable to any static host. Cream background, green accents.
+  - `index.html` – the web app shell (code in `public/app/`, vanilla JS ES modules, no build step). The site's home page **is the diary**: guests can fill in an entry; on save they must sign up/log in, go through consent (onboarding), and only then the entry is inserted (`resumePending()`; until then it waits in localStorage `visus.pendingEntry`, never sent before consent).
+  - `o-aplikaciji.html` – former landing page (features, privacy, mobile-app waitlist). `privacy.html`, `terms.html`.
+  - `app/index.html` + `app/redirect.js` – old `/app/` URL redirects to `/` keeping `?code=` and `#route`.
 - `public/config.js` – Supabase URL + anon key, `GOOGLE_LOGIN` flag.
 - `public/app/rules.js` – single source of product rules (metrics, periods, XP/levels/streak, badges, milestones, demographic options).
 - `supabase/schema.sql` – the whole backend; run once in Supabase SQL Editor (idempotent). Business rules live in the DB, not the client:
