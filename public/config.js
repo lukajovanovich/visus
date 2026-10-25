@@ -5,4 +5,4 @@ export const SUPABASE_URL = 'https://yjmehmnbjjktxnhckwhe.supabase.co';
 export const SUPABASE_ANON_KEY = 'sb_publishable_rr090TETJn2Cf_OHA4tpfQ_jgTq4a4d';
 
 // Uključiti kada se Google podesi u Supabase → Authentication → Sign In / Providers → Google.
-export const GOOGLE_LOGIN = false;
+export const GOOGLE_LOGIN = true;
