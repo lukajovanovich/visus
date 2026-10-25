@@ -1,0 +1,10 @@
+{
+  "name": "visus",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Visus – dnevnik stanja očiju (web aplikacija, Supabase)",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/serve.js"
+  }
+}
