@@ -361,11 +361,70 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
+-- Admin (istraživački tim): vidi samo anonimne istraživačke zapise i ukupne brojeve.
+-- Admin se dodaje isključivo ovde, u SQL Editoru (aplikacija to ne može):
+--   insert into private.admins (user_id)
+--   select id from auth.users where email = 'ADMIN-EMAIL';
+-- -----------------------------------------------------------------------------
+create table if not exists private.admins (
+  user_id    uuid primary key references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from private.admins where user_id = auth.uid())
+$$;
+
+create or replace function private.require_admin()
+returns void language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not exists (select 1 from private.admins where user_id = auth.uid()) then
+    raise exception 'Nemate administratorski pristup' using errcode = 'insufficient_privilege';
+  end if;
+end;
+$$;
+
+-- Ukupni brojevi – bez ikakvih ličnih podataka.
+create or replace function public.admin_overview()
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  perform private.require_admin();
+  return jsonb_build_object(
+    'users',                 (select count(*) from public.profiles where onboarded_at is not null),
+    'research_participants', (select count(*) from public.profiles where research_opt_in),
+    'entries',               (select count(*) from public.entries),
+    'research_records',      (select count(*) from research.records),
+    'waitlist',              (select count(*) from public.waitlist)
+  );
+end;
+$$;
+
+-- Anonimni istraživački zapisi (Tier 1) za izabrani period.
+create or replace function public.admin_research(p_from timestamptz default null, p_to timestamptz default null)
+returns table (pseudonym text, "timestamp" timestamptz, period text,
+               dryness smallint, clarity smallint, fatigue smallint, redness smallint, light smallint)
+language plpgsql stable security definer set search_path = '' as $$
+#variable_conflict use_column
+begin
+  perform private.require_admin();
+  return query
+    select r.pseudonym, r.timestamp, r.period, r.dryness, r.clarity, r.fatigue, r.redness, r.light
+    from research.records r
+    where (p_from is null or r.timestamp >= p_from)
+      and (p_to is null or r.timestamp < p_to)
+    order by r.id;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
 -- Prava pristupa i Row Level Security
 -- -----------------------------------------------------------------------------
 revoke all on all functions in schema private from public, anon, authenticated;
 revoke all on function public.claim_reward(text), public.research_preview(), public.delete_account() from public, anon;
 grant execute on function public.claim_reward(text), public.research_preview(), public.delete_account() to authenticated;
+revoke all on function public.is_admin(), public.admin_overview(), public.admin_research(timestamptz, timestamptz) from public, anon;
+grant execute on function public.is_admin(), public.admin_overview(), public.admin_research(timestamptz, timestamptz) to authenticated;
 
 revoke all on public.profiles, public.entries, public.consent_events, public.redemptions, public.waitlist from anon, authenticated;
 grant select, update on public.profiles to authenticated;
@@ -377,6 +436,7 @@ grant insert on public.waitlist to anon, authenticated;
 -- Funkcije koje ih koriste rade kao vlasnik tabele, pa RLS na njih ne utiče.
 alter table private.settings      enable row level security;
 alter table research.records      enable row level security;
+alter table private.admins        enable row level security;
 
 alter table public.profiles       enable row level security;
 alter table public.entries        enable row level security;

@@ -97,6 +97,8 @@ Right now Visus is built as a **desktop web app** (sidebar layout, mobile only n
   - Tier 1 in schema `research` (not exposed via API); filled by trigger on entry insert when opted in; pseudonym = HMAC(pepper in `private.settings`, user id).
   - Triggers: future dates rejected, `retroactive` computed in user's timezone, immutable fields on update, consent log written automatically.
   - RPCs: `claim_reward` (checks XP server-side; XP thresholds duplicated from rules.js), `research_preview`, `delete_account`.
+  - Admin (research team): `private.admins` (added only via SQL Editor), RPCs `is_admin`, `admin_overview` (aggregate counts only), `admin_research` (Tier 1 records only). Admins never get Tier 2 personal data.
+- `public/admin.html` + `public/app/admin.js` / `admin.css` – separate admin page at `/admin` (not linked from the patient app): research dashboard + CSV export. Chart shared via `public/app/chart.js`.
   - Consent version lives in `private.current_consent_version()` **and** `CONSENT_VERSION` in rules.js – change both together.
 - Auth: Supabase email+password (PKCE); Google via Supabase provider when `GOOGLE_LOGIN = true`.
 - Reminders: browser notifications while the app tab is open (no push server in the demo).
