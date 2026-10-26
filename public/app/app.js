@@ -8,7 +8,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
 import {
   CONSENT_VERSION, STREAK_MIN, XP_PER_ENTRY, XP_PER_STREAK_DAY, NOTE_MAX,
-  METRICS, PERIODS, LEVELS, MILESTONES, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI,
+  METRICS, PERIODS, LEVELS, MILESTONES, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI, DIOPTER_KEYS,
+  SYMPTOMS, URGENCY, SYMPTOM_OTHER_MAX,
   dayKey, parseKey, addDays, severity, computeStats,
 } from './rules.js';
 import { lineChart } from './chart.js';
@@ -72,6 +73,9 @@ function entryFromRow(r) {
     date: r.date,
     period: r.period,
     scores: Object.fromEntries(METRICS.map((m) => [m.key, r[m.key]])),
+    symptoms: r.symptoms || [],
+    symptomOther: r.symptom_other || '',
+    urgency: r.urgency || null,
     note: r.note,
     retroactive: r.retroactive,
     createdAt: r.created_at,
@@ -179,6 +183,10 @@ const view = () => state || GUEST_VIEW;
 const findEntry = (date, period) => view().entries.find((e) => e.date === date && e.period === period);
 const entriesOn = (date) => view().entries.filter((e) => e.date === date);
 const periodOf = (key) => PERIODS.find((p) => p.key === key);
+const urgencyOf = (key) => URGENCY.find((u) => u.key === key);
+const symptomName = (key) => SYMPTOMS.find((x) => x.key === key)?.name || key;
+// Naziv simptoma za prikaz; "Drugo" dobija opis koji je korisnik upisao.
+const symptomLabel = (e, key) => (key === 'other' && e.symptomOther ? `Drugo: ${e.symptomOther}` : symptomName(key));
 const stats = () => computeStats(view().entries, todayKey(), view().research.optIn);
 
 function toast(msg) {
@@ -493,8 +501,8 @@ function renderOnboarding() {
       <h1>Pomozite istraživanju 🔬</h1>
       <p class="lead">Ovo je <b>posebna i dobrovoljna</b> odluka. Aplikaciju koristite potpuno isto i ako odbijete.</p>
       <div class="grid cols-2">
-        <div class="card"><h3>Šta se deli ako pristanete</h3><ul class="bullets small"><li>Pet ocena simptoma</li><li>Doba dana i vreme unosa</li><li>Opciono: isečak regiona oka</li></ul></div>
-        <div class="card"><h3>Šta se nikada ne deli</h3><ul class="bullets small"><li>Ime, email, ID uređaja</li><li>Vaše beleške</li><li>Demografski podaci</li></ul></div>
+        <div class="card"><h3>Šta se deli ako pristanete</h3><ul class="bullets small"><li>Pet ocena simptoma</li><li>Prisutni simptomi i stanje hitnosti</li><li>Doba dana i vreme unosa</li><li>Opciono: isečak regiona oka</li></ul></div>
+        <div class="card"><h3>Šta se nikada ne deli</h3><ul class="bullets small"><li>Ime, email, ID uređaja</li><li>Vaše beleške</li><li>Vaš profil (godine, lekovi, operacije, dioptrija…)</li></ul></div>
       </div>
       <p class="small muted">Identitet se zamenjuje pseudonimom (jednosmerni heš). Podatke koristi samo istraživački tim. Učešće možete povući bilo kada.</p>
       <div class="grid cols-2">
@@ -509,8 +517,8 @@ function renderOnboarding() {
 
   if (o.step === 2) {
     return shell(`
-      <h1>O vama</h1>
-      <p class="lead">Sva polja su opciona. Popunite samo ono što želite.</p>
+      <h1>O vama i vašim očima</h1>
+      <p class="lead">Sva polja su opciona. Popunite samo ono što želite, a sve možete kasnije promeniti u Podešavanjima.</p>
       <div class="card">${demographicsForm(o.demo, 'onb')}</div>
       <div class="onb-actions">
         <button class="btn btn-ghost" data-action="onb-back">← Nazad</button>
@@ -540,7 +548,12 @@ function choiceGroup(field, value, scope) {
 }
 
 function demographicsForm(d, scope) {
+  const diopter = (key, label) => `
+    <label class="field diopter">${label}
+      <input type="text" inputmode="decimal" maxlength="7" placeholder="npr. -1,50" value="${esc(String(d[key] ?? '').replace('.', ','))}" data-bind="${key}" data-scope="${scope}">
+    </label>`;
   return `
+    <h3 class="form-section">Osnovno</h3>
     <label class="field">Starosna grupa
       <select data-bind="ageRange" data-scope="${scope}">
         <option value="">Ne želim da navedem</option>
@@ -548,14 +561,29 @@ function demographicsForm(d, scope) {
       </select>
     </label>
     <div class="field"><span>Pol</span>${choiceGroup('sex', d.sex, scope)}</div>
-    <div class="field"><span>Pomagala za vid</span>${choiceGroup('aids', d.aids, scope)}</div>
-    <div class="field"><span>Dijagnostikovana stanja</span>${choiceGroup('conditions', d.conditions, scope)}</div>
-    <div class="field" style="margin-bottom:0"><span>Vreme pred ekranom dnevno</span>${choiceGroup('screenHours', d.screenHours, scope)}</div>`;
+    <div class="field"><span>Rad za računarom / pred ekranom dnevno</span>${choiceGroup('screenHours', d.screenHours, scope)}</div>
+
+    <h3 class="form-section">Vid</h3>
+    <div class="field"><span>Naočare i sočiva</span>${choiceGroup('aids', d.aids, scope)}</div>
+    <div class="field"><span>Dioptrija <span class="hint">ako znate (minus za kratkovidost, plus za dalekovidost)</span></span>
+      <div class="diopter-row">${diopter('diopterRight', 'Desno oko')}${diopter('diopterLeft', 'Levo oko')}</div>
+    </div>
+
+    <h3 class="form-section">Zdravlje očiju</h3>
+    <div class="field"><span>Očne bolesti (dijagnostikovane)</span>${choiceGroup('conditions', d.conditions, scope)}</div>
+    <div class="field"><span>Operacije očiju</span>${choiceGroup('surgeries', d.surgeries, scope)}</div>
+    <div class="field"><span>Upotreba lekova za oči</span>${choiceGroup('medication', d.medication, scope)}</div>
+    <div class="field"><span>Koji lekovi <span class="hint">ako koristite ili ste koristili</span></span>${choiceGroup('medicationTypes', d.medicationTypes, scope)}</div>
+    <div class="field" style="margin-bottom:0"><span>Alergija</span>${choiceGroup('allergy', d.allergy, scope)}</div>`;
 }
 
 // Minimizacija podataka: čuvaju se samo poznata, popunjena polja.
 function cleanDemographics(d) {
   const out = {};
+  for (const key of DIOPTER_KEYS) {
+    const v = parseFloat(String(d[key] ?? '').replace(',', '.'));
+    if (Number.isFinite(v) && v >= -30 && v <= 30) out[key] = Math.round(v * 4) / 4;
+  }
   for (const [key, options] of Object.entries(DEMOGRAPHIC_OPTIONS)) {
     const v = d[key];
     if (DEMOGRAPHIC_MULTI.includes(key)) {
@@ -575,11 +603,19 @@ function renderReconsent() {
       <h1>Ažurirali smo uslove</h1>
       <p class="lead">Politika privatnosti je promenjena (verzija ${esc(state.consent?.version || '–')} → ${CONSENT_VERSION}). Da biste nastavili, potrebna je ponovna saglasnost.</p>
       <div class="card">
+        <h3>Šta je novo u verziji ${CONSENT_VERSION}</h3>
+        <ul class="bullets small">
+          <li>Uz ocene, unos sada beleži i <b>prisutne simptome</b> (suzenje, svrab, bol…) i <b>stanje hitnosti</b>.</li>
+          <li>Profil je proširen: lekovi za oči, operacije, alergije i dioptrija. Sva polja su opciona.</li>
+          <li>Ako učestvujete u istraživanju, anonimno se dele i prisutni simptomi i stanje hitnosti. Profil i beleške se nikada ne dele.</li>
+        </ul>
+      </div>
+      <div class="card" style="margin-top:16px">
         <p style="margin-top:0"><a href="../privacy.html" target="_blank">Pročitaj celu politiku privatnosti →</a></p>
         <label class="consent-item"><input type="checkbox" id="reconsent-check">
           <div class="small">Pročitao/la sam i prihvatam Politiku privatnosti i Uslove korišćenja, verzija ${CONSENT_VERSION}.</div></label>
       </div>
-      <p class="small muted">Vaš izbor o učešću u istraživanju (${state.research.optIn ? 'uključeno' : 'isključeno'}) ostaje nepromenjen.</p>
+      <p class="small muted">Vaš izbor o učešću u istraživanju (${state.research.optIn ? 'uključeno' : 'isključeno'}) ostaje nepromenjen. Možete ga promeniti u Podešavanjima → Istraživanje.</p>
       <div class="onb-actions">
         <button class="btn btn-danger" data-action="delete-account-confirm">Ne prihvatam, obriši nalog</button>
         <button class="btn btn-primary" data-action="reconsent-accept">Prihvatam</button>
@@ -688,12 +724,14 @@ function scoreBars(e) {
 
 function entriesTable(list) {
   return `<div class="table-wrap"><table class="table">
-    <thead><tr><th>Datum</th><th>Doba dana</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th>Beleška</th></tr></thead>
+    <thead><tr><th>Datum</th><th>Doba dana</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th title="Stanje">Stanje</th><th>Simptomi</th><th>Beleška</th></tr></thead>
     <tbody>${list.map((e) => `
       <tr class="clickable" data-action="open-log" data-date="${e.date}" data-period="${e.period}">
         <td>${relDay(e.date)}${e.retroactive ? ' <span class="tag warn">naknadno</span>' : ''}</td>
         <td>${periodOf(e.period).emoji} ${periodOf(e.period).name}</td>
         ${METRICS.map((m) => `<td><span class="pill-score" style="background:${sevColor(severity(m, e.scores[m.key]))}">${e.scores[m.key]}</span></td>`).join('')}
+        <td title="${urgencyOf(e.urgency)?.name || ''}">${urgencyOf(e.urgency)?.icon || '–'}</td>
+        <td class="note-cell">${e.symptoms.length ? esc(e.symptoms.map((k) => symptomLabel(e, k)).join(', ')) : '–'}</td>
         <td class="note-cell">${esc(e.note) || '–'}</td>
       </tr>`).join('')}</tbody></table></div>`;
 }
@@ -726,8 +764,8 @@ function getPending() {
 
 function guestSave() {
   const d = ui.draft;
-  if (!METRICS.every((m) => d.scores[m.key])) return;
-  setPending({ date: d.date, period: d.period, scores: { ...d.scores }, note: d.note, savedAt: Date.now() });
+  if (!isDraftComplete(d)) return;
+  setPending({ date: d.date, period: d.period, scores: { ...d.scores }, symptoms: [...d.symptoms], symptomOther: d.symptomOther, urgency: d.urgency, note: d.note, savedAt: Date.now() });
   ui.draft = null;
   ui.authTab = 'signup';
   ui.authMsg = { ok: true, text: 'Unos je spreman. Napravite besplatan nalog ili se prijavite da ga sačuvate.' };
@@ -741,14 +779,16 @@ async function resumePending() {
   if (!p) return false;
   setPending(null);
   const existing = findEntry(p.date, p.period);
-  if (existing) {
-    ui.draft = { date: p.date, period: p.period, id: existing.id, scores: p.scores, note: p.note };
+  // Već postoji unos za taj termin, ili je unos sačuvan pre nego što je stanje hitnosti postalo obavezno:
+  // otvori formu da korisnik proveri i sačuva.
+  if (existing || !p.urgency) {
+    ui.draft = { date: p.date, period: p.period, id: existing?.id || null, scores: p.scores, symptoms: p.symptoms || [], symptomOther: p.symptomOther || '', urgency: p.urgency || null, note: p.note };
     ui.returnTo = '/home';
     go(`/log?date=${p.date}&period=${p.period}`);
-    toast('Za ovaj termin već imate unos. Proverite nove ocene i sačuvajte.');
+    toast(existing ? 'Za ovaj termin već imate unos. Proverite nove ocene i sačuvajte.' : 'Proverite unos i sačuvajte ga.');
     return true;
   }
-  const row = check(await sb.from('entries').insert({ ...p.scores, note: p.note, date: p.date, period: p.period }).select().single());
+  const row = check(await sb.from('entries').insert({ ...p.scores, symptoms: p.symptoms || [], symptom_other: p.symptomOther || null, urgency: p.urgency, note: p.note, date: p.date, period: p.period }).select().single());
   state.entries.push(entryFromRow(row));
   go('/home');
   toast(`Vaš unos je sačuvan · +${XP_PER_ENTRY} XP`);
@@ -759,10 +799,18 @@ function loadDraft(date, period) {
   const existing = findEntry(date, period);
   const pending = !state && getPending();
   if (pending && pending.date === date && pending.period === period) {
-    ui.draft = { date, period, id: null, scores: { ...pending.scores }, note: pending.note };
+    ui.draft = { date, period, id: null, scores: { ...pending.scores }, symptoms: [...(pending.symptoms || [])], symptomOther: pending.symptomOther || '', urgency: pending.urgency || null, note: pending.note };
     return;
   }
-  ui.draft = { date, period, id: existing?.id || null, scores: existing ? { ...existing.scores } : {}, note: existing?.note || '' };
+  ui.draft = {
+    date, period,
+    id: existing?.id || null,
+    scores: existing ? { ...existing.scores } : {},
+    symptoms: existing ? [...existing.symptoms] : [],
+    symptomOther: existing?.symptomOther || '',
+    urgency: existing?.urgency || null,
+    note: existing?.note || '',
+  };
 }
 
 function renderLog(params) {
@@ -772,9 +820,10 @@ function renderLog(params) {
   const period = periodOf(params.get('period')) ? params.get('period') : defaultPeriod(date);
   if (!ui.draft || ui.draft.date !== date || ui.draft.period !== period) loadDraft(date, period);
   const d = ui.draft;
-  const complete = METRICS.every((m) => d.scores[m.key]);
   const filled = Object.keys(d.scores).length;
+  const complete = isDraftComplete(d);
   const guest = !state;
+  const missing = filled < METRICS.length ? `Ocenite svih 5 simptoma (${filled}/5)` : 'Izaberite kakvo je stanje';
 
   const head = `
     <div class="page-head">
@@ -785,13 +834,14 @@ function renderLog(params) {
       </div>
     </div>`;
 
-  const saveLabel = guest
-    ? (complete ? 'Sačuvaj unos' : `Ocenite svih 5 simptoma (${filled}/5)`)
-    : d.id ? 'Sačuvaj izmene' : complete ? `Sačuvaj · +${XP_PER_ENTRY} XP` : `Ocenite svih 5 simptoma (${filled}/5)`;
+  const saveLabel = !complete ? missing
+    : guest ? 'Sačuvaj unos'
+    : d.id ? 'Sačuvaj izmene' : `Sačuvaj · +${XP_PER_ENTRY} XP`;
 
   const body = `${head}
 
     <div class="grid main-side">
+      <div class="stack">
       <div class="card">
         ${METRICS.map((m) => {
           const v = d.scores[m.key];
@@ -805,6 +855,33 @@ function renderLog(params) {
             </div>
           </div>`;
         }).join('')}
+      </div>
+
+      <div class="card">
+        <h2>Koje simptome imate?</h2>
+        <p class="small muted" style="margin:-8px 0 12px">Označite sve što osećate sada. Ako nemate nijedan, preskočite.</p>
+        <div class="choice-grid">
+          ${SYMPTOMS.map((x) => `<button type="button" class="choice ${d.symptoms.includes(x.key) ? 'on' : ''}" data-action="symptom" data-value="${x.key}" aria-pressed="${d.symptoms.includes(x.key)}">${x.name}</button>`).join('')}
+        </div>
+        ${d.symptoms.includes('other') ? `
+        <label class="field" style="margin:14px 0 0">Koji simptom? <span class="hint">opišite ukratko, vidite samo vi</span>
+          <input type="text" id="symptom-other" maxlength="${SYMPTOM_OTHER_MAX}" placeholder="npr. treptanje kapka, dvoslike…" value="${esc(d.symptomOther)}" data-bind="symptomOther" data-scope="draft">
+        </label>` : ''}
+      </div>
+
+      <div class="card">
+        <h2>Kakvo je stanje?</h2>
+        <div class="urgency-grid">
+          ${URGENCY.map((u) => `<button type="button" class="option-card urgency-${u.key} ${d.urgency === u.key ? 'on' : ''}" data-action="urgency" data-value="${u.key}" aria-pressed="${d.urgency === u.key}">
+            <strong>${u.icon} ${u.name}</strong><div class="small muted">${u.desc}</div></button>`).join('')}
+        </div>
+        ${d.urgency === 'sudden' || d.urgency === 'doctor' ? `
+        <div class="alert">
+          <strong>⚠️ Ako je hitno, ne čekajte.</strong>
+          Kod naglog pada vida, jakog bola u oku, bljeskova, „zavese“ ili senke u vidnom polju, ili povrede oka,
+          odmah se javite oftalmologu ili hitnoj pomoći (<b>194</b>). Visus ne obaveštava lekara o vašim unosima.
+        </div>` : ''}
+      </div>
       </div>
 
       <div class="card side-panel">
@@ -829,12 +906,16 @@ function renderLog(params) {
   return body;
 }
 
+function isDraftComplete(d) {
+  return METRICS.every((m) => d.scores[m.key]) && !!d.urgency;
+}
+
 async function saveEntry() {
   if (!state) return guestSave();
   const d = ui.draft;
-  if (!METRICS.every((m) => d.scores[m.key])) return;
+  if (!isDraftComplete(d)) return;
   const before = stats();
-  const fields = { ...d.scores, note: d.note };
+  const fields = { ...d.scores, symptoms: d.symptoms, symptom_other: d.symptoms.includes('other') ? d.symptomOther.trim() || null : null, urgency: d.urgency, note: d.note };
 
   if (d.id) {
     const row = check(await sb.from('entries').update(fields).eq('id', d.id).select().single());
@@ -930,6 +1011,10 @@ function renderHistory() {
               <button class="btn btn-ghost btn-sm" data-action="open-log" data-date="${sel}" data-period="${p.key}">Izmeni</button>
             </div>
             <div class="entry-scores">${METRICS.map((m) => `<div><b style="background:${sevColor(severity(m, e.scores[m.key]))}">${e.scores[m.key]}</b>${m.name.split(' ')[0]}</div>`).join('')}</div>
+            ${e.urgency || e.symptoms.length ? `<div class="entry-tags">
+              ${e.urgency ? `<span class="tag urgency-${e.urgency}">${urgencyOf(e.urgency).icon} ${urgencyOf(e.urgency).name}</span>` : ''}
+              ${e.symptoms.map((k) => `<span class="tag">${esc(symptomLabel(e, k))}</span>`).join('')}
+            </div>` : ''}
             ${e.note ? `<div class="entry-note">${esc(e.note)}</div>` : ''}
           </div>`;
         }).join('')}
@@ -1032,7 +1117,24 @@ function renderTrends() {
         </div>
         <p class="small muted" style="margin:14px 0 0">Ukupni indeks tegoba: 1 = bez tegoba, 5 = jake tegobe.</p>
       </div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h2>Najčešći simptomi</h2>
+      ${symptomFrequency(inRange)}
     </div>`;
+}
+
+// Udeo unosa u kojima je svaki simptom označen (najčešći prvi).
+function symptomFrequency(list) {
+  const rows = SYMPTOMS.map((x) => ({ x, n: list.filter((e) => e.symptoms.includes(x.key)).length }))
+    .filter((r) => r.n).sort((a, b) => b.n - a.n);
+  if (!rows.length) return '<div class="empty small">U ovom periodu niste označili nijedan simptom.</div>';
+  return `<div class="bars">${rows.map(({ x, n }) => `
+    <div class="bar-row"><span>${x.name}</span>
+      <div class="bar-track"><span style="width:${(n / list.length) * 100}%;background:var(--accent)"></span></div>
+      <b>${Math.round((n / list.length) * 100)}%</b></div>`).join('')}</div>
+    <p class="small muted" style="margin:14px 0 0">Procenat unosa u kojima je simptom označen.</p>`;
 }
 
 /* ---------- Nagrade ---------- */
@@ -1146,8 +1248,8 @@ function renderSettings() {
 
       <div class="stack">
         <div class="card">
-          <h2>Demografski podaci</h2>
-          <p class="small muted" style="margin-top:-6px">Sva polja su opciona.</p>
+          <h2>O vama i vašim očima</h2>
+          <p class="small muted" style="margin-top:-6px">Sva polja su opciona. Vidite ih samo vi.</p>
           ${demographicsForm(ui.demoEdit, 'edit')}
           <div class="row" style="margin-top:18px">
             <button class="btn btn-primary btn-sm" data-action="save-demo">Sačuvaj</button>
@@ -1175,7 +1277,7 @@ function researchModal() {
     <ul class="bullets"><li>Novi unosi se više neće deliti</li><li>Aplikaciju i dalje koristite potpuno isto</li><li>Već podeljeni pseudonimni zapisi ostaju u istraživačkoj arhivi</li></ul>
     <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Ostavi uključeno</button><button class="btn btn-danger" data-action="research-set" data-value="off">Isključi učešće</button></div>` : `
     <h2>Učešće u istraživanju</h2>
-    <p class="muted">Delićete samo ocene simptoma, doba dana i vreme unosa, pod pseudonimom. Bez imena, emaila i beleški.</p>
+    <p class="muted">Delićete samo ocene, prisutne simptome, stanje hitnosti, doba dana i vreme unosa, pod pseudonimom. Bez imena, emaila, beleški i profila.</p>
     <p class="small muted">Deljenje počinje od sledećeg unosa. Ranije unose ne delimo naknadno.</p>
     <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Ne sada</button><button class="btn btn-primary" data-action="research-set" data-value="on">Uključi učešće</button></div>`);
 }
@@ -1250,7 +1352,8 @@ function demoTarget(scope) {
 
 function handleBind(el) {
   const { scope, bind } = el.dataset;
-  const root = bind === 'ageRange' ? demoTarget(scope) : scope === 'onb' ? ui.onb : scope === 'draft' ? ui.draft : null;
+  const root = bind === 'ageRange' || DIOPTER_KEYS.includes(bind) ? demoTarget(scope)
+    : scope === 'onb' ? ui.onb : scope === 'draft' ? ui.draft : null;
   if (!root) return;
   const keys = bind.split('.');
   const last = keys.pop();
@@ -1351,6 +1454,27 @@ const actions = {
     window.scrollTo(0, y);
   },
   'save-entry'() { return saveEntry(); },
+  symptom(el) {
+    const k = el.dataset.value;
+    const list = ui.draft.symptoms;
+    ui.draft.symptoms = list.includes(k) ? list.filter((x) => x !== k) : [...list, k];
+    if (k === 'other') {
+      // Polje za opis se pojavljuje/nestaje, pa se strana ponovo iscrtava.
+      const y = window.scrollY;
+      render();
+      window.scrollTo(0, y);
+      if (ui.draft.symptoms.includes('other')) $('#symptom-other')?.focus();
+      return;
+    }
+    el.classList.toggle('on');
+    el.setAttribute('aria-pressed', String(ui.draft.symptoms.includes(k)));
+  },
+  urgency(el) {
+    ui.draft.urgency = el.dataset.value;
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+  },
   'delete-entry'(el) {
     openModal(`<h2>Obrisati unos?</h2><p class="muted">Ova radnja se ne može poništiti.</p>
       <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Otkaži</button><button class="btn btn-danger" data-action="delete-entry-yes" data-id="${el.dataset.id}">Obriši</button></div>`);

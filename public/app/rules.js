@@ -1,7 +1,7 @@
 // Shared product rules – imported by the web app and by the server
 // (the server uses them to validate input and reward claims).
 
-export const CONSENT_VERSION = '1.0';
+export const CONSENT_VERSION = '1.1';
 export const STREAK_MIN = 3;
 export const XP_PER_ENTRY = 15;
 export const XP_PER_STREAK_DAY = 5;
@@ -55,14 +55,43 @@ export const BADGES = [
   { id: 'e50', icon: '📚', name: '50 unosa', desc: 'Ukupno 50 unosa', test: (s) => s.entryCount >= 50 },
 ];
 
+// Prisutni simptomi u unosu (više izbora). Ključevi se čuvaju u bazi – menjati zajedno sa schema.sql.
+export const SYMPTOMS = [
+  { key: 'tearing', name: 'Suzenje' },
+  { key: 'discharge', name: 'Krmeljenje' },
+  { key: 'red_eye', name: 'Crveno oko' },
+  { key: 'foreign_body', name: 'Osećaj stranog tela' },
+  { key: 'burning', name: 'Peckanje' },
+  { key: 'itching', name: 'Svrab' },
+  { key: 'pain', name: 'Bol u oku' },
+  { key: 'pressure', name: 'Osećaj pritiska' },
+  { key: 'reduced_acuity', name: 'Smanjena vidna oštrina' },
+  { key: 'other', name: 'Drugo' }, // uz opis u entries.symptom_other (ne deli se sa istraživanjem)
+];
+export const SYMPTOM_OTHER_MAX = 120;
+
+// Stanje hitnosti u unosu (obavezno, jedan izbor).
+export const URGENCY = [
+  { key: 'usual', icon: '🟢', name: 'Uobičajeni simptomi', desc: 'Kao i inače' },
+  { key: 'sudden', icon: '🟠', name: 'Naglo nastali simptomi', desc: 'Pojavili su se ili pogoršali naglo' },
+  { key: 'doctor', icon: '🔴', name: 'Potreban oftalmolog', desc: 'Mislim da treba da me pregleda lekar' },
+];
+
+// Profil korisnika (sva polja opciona). Čuva se u profiles.demographics.
 export const DEMOGRAPHIC_OPTIONS = {
   ageRange: ['18–29', '30–44', '45–59', '60–74', '75+'],
   sex: ['Žensko', 'Muško', 'Drugo', 'Ne želim da navedem'],
   aids: ['Naočare', 'Kontaktna sočiva', 'Ništa od navedenog'],
-  conditions: ['Sindrom suvog oka', 'Glaukom', 'Alergijski konjunktivitis', 'Katarakta', 'Makularna degeneracija', 'Drugo', 'Nemam dijagnozu'],
   screenHours: ['Manje od 2h', '2–4h', '4–8h', 'Više od 8h'],
+  conditions: ['Sindrom suvog oka', 'Glaukom', 'Alergijski konjunktivitis', 'Katarakta', 'Makularna degeneracija', 'Drugo', 'Nemam dijagnozu'],
+  surgeries: ['Laserska korekcija vida', 'Operacija katarakte', 'Operacija glaukoma', 'Operacija mrežnjače', 'Drugo', 'Nisam imao/la operaciju'],
+  medication: ['Već koristim', 'Koristio/la sam ranije', 'Do sada nisam koristio/la'],
+  medicationTypes: ['Veštačke suze', 'Kapi za glaukom', 'Antialergijske kapi', 'Antibiotske kapi', 'Kortikosteroidne kapi', 'Drugo'],
+  allergy: ['Nemam alergiju', 'Sezonska (npr. polen)', 'Tokom cele godine', 'Ne znam'],
 };
-export const DEMOGRAPHIC_MULTI = ['aids', 'conditions'];
+export const DEMOGRAPHIC_MULTI = ['aids', 'conditions', 'surgeries', 'medicationTypes'];
+// Dioptrija (desno / levo oko), opciono, od −30 do +30 u koracima od 0,25.
+export const DIOPTER_KEYS = ['diopterRight', 'diopterLeft'];
 
 /* ---------- Dates (YYYY-MM-DD keys, calendar arithmetic in UTC to avoid DST drift) ---------- */
 

@@ -372,3 +372,21 @@ body.busy .btn { opacity: .7; }
 
 /* Link ka admin strani – vidljiv samo adminima */
 .nav .nav-admin { margin-top: 10px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; padding-top: 14px; }
+
+/* v1.1: simptomi, stanje hitnosti, prošireni profil */
+.urgency-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.urgency-grid .option-card { margin: 0; }
+.option-card.urgency-usual.on { border-color: var(--s1); background: color-mix(in srgb, var(--s1) 10%, var(--surface)); }
+.option-card.urgency-sudden.on { border-color: var(--s4); background: color-mix(in srgb, var(--s4) 10%, var(--surface)); }
+.option-card.urgency-doctor.on { border-color: var(--s5); background: color-mix(in srgb, var(--s5) 10%, var(--surface)); }
+.alert { margin-top: 14px; padding: 12px 14px; border-radius: 12px; font-size: 0.9rem; background: color-mix(in srgb, var(--danger) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.alert strong { display: block; margin-bottom: 4px; color: var(--danger); }
+.entry-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.tag.urgency-usual { background: color-mix(in srgb, var(--s1) 14%, transparent); color: var(--text); }
+.tag.urgency-sudden { background: color-mix(in srgb, var(--s4) 18%, transparent); color: var(--text); }
+.tag.urgency-doctor { background: color-mix(in srgb, var(--s5) 16%, transparent); color: var(--danger); }
+.form-section { margin: 22px 0 12px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.95rem; }
+.form-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.diopter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 160px)); gap: 12px; }
+.diopter-row .field { margin: 0; font-weight: 500; }
+@media (max-width: 700px) { .urgency-grid { grid-template-columns: 1fr; } }

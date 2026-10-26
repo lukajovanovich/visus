@@ -37,11 +37,14 @@ create table if not exists research.records (
   eye_crop  bytea
 );
 create index if not exists records_pseudonym_idx on research.records (pseudonym);
+-- v1.1: prisutni simptomi i stanje hitnosti
+alter table research.records add column if not exists symptoms text[] not null default '{}';
+alter table research.records add column if not exists urgency  text;
 
 -- Trenutna verzija politike privatnosti. Kada se promeni, korisnici ponovo daju saglasnost.
 -- Mora da se poklapa sa CONSENT_VERSION u public/app/rules.js.
 create or replace function private.current_consent_version()
-returns text language sql immutable as $$ select '1.0' $$;
+returns text language sql immutable as $$ select '1.1' $$;
 
 -- -----------------------------------------------------------------------------
 -- Tier 2 – lični podaci
@@ -77,6 +80,17 @@ create table if not exists public.entries (
   unique (user_id, date, period)
 );
 create index if not exists entries_user_date_idx on public.entries (user_id, date);
+
+-- v1.1: prisutni simptomi (više izbora) i stanje hitnosti. Ključevi = SYMPTOMS / URGENCY u rules.js.
+alter table public.entries add column if not exists symptoms text[] not null default '{}';
+alter table public.entries add column if not exists urgency  text;
+-- Opis za simptom "Drugo" – ostaje samo u ličnom dnevniku, ne kopira se u istraživanje.
+alter table public.entries add column if not exists symptom_other text check (char_length(symptom_other) <= 120);
+alter table public.entries drop constraint if exists entries_symptoms_check;
+alter table public.entries add constraint entries_symptoms_check check (
+  symptoms <@ array['tearing', 'discharge', 'red_eye', 'foreign_body', 'burning', 'itching', 'pain', 'pressure', 'reduced_acuity', 'other']::text[]);
+alter table public.entries drop constraint if exists entries_urgency_check;
+alter table public.entries add constraint entries_urgency_check check (urgency in ('usual', 'sudden', 'doctor'));
 
 create table if not exists public.consent_events (
   id         bigint generated always as identity primary key,
@@ -227,6 +241,11 @@ begin
     raise exception 'Datum ne može biti u budućnosti' using errcode = 'check_violation';
   end if;
 
+  if new.urgency is null then
+    raise exception 'Izaberite kakvo je stanje (uobičajeno, naglo nastalo ili potreban oftalmolog)' using errcode = 'check_violation';
+  end if;
+  new.symptoms := array(select distinct unnest(coalesce(new.symptoms, '{}')) order by 1);
+  new.symptom_other := case when 'other' = any(new.symptoms) then nullif(btrim(new.symptom_other), '') end;
   new.note := btrim(coalesce(new.note, ''));
   new.retroactive := new.date <> v_today;
   new.created_at := now();
@@ -248,6 +267,8 @@ begin
   new.period := old.period;
   new.retroactive := old.retroactive;
   new.created_at := old.created_at;
+  new.symptoms := array(select distinct unnest(coalesce(new.symptoms, '{}')) order by 1);
+  new.symptom_other := case when 'other' = any(new.symptoms) then nullif(btrim(new.symptom_other), '') end;
   new.note := btrim(coalesce(new.note, ''));
   new.updated_at := now();
   return new;
@@ -262,8 +283,9 @@ create or replace function private.entries_after_insert()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   if (select research_opt_in from public.profiles where id = new.user_id) then
-    insert into research.records (pseudonym, timestamp, period, dryness, clarity, fatigue, redness, light)
-    values (private.pseudonym(new.user_id), new.created_at, new.period, new.dryness, new.clarity, new.fatigue, new.redness, new.light);
+    insert into research.records (pseudonym, timestamp, period, dryness, clarity, fatigue, redness, light, symptoms, urgency)
+    values (private.pseudonym(new.user_id), new.created_at, new.period, new.dryness, new.clarity, new.fatigue, new.redness, new.light,
+            new.symptoms, new.urgency);
   end if;
   return new;
 end;
@@ -343,6 +365,8 @@ begin
       'period', v_last.period,
       'scores', jsonb_build_object('dryness', v_last.dryness, 'clarity', v_last.clarity, 'fatigue', v_last.fatigue,
                                    'redness', v_last.redness, 'light', v_last.light),
+      'symptoms', to_jsonb(v_last.symptoms),
+      'urgency', v_last.urgency,
       'eyeCrop', null) end
   );
 end;
@@ -401,15 +425,18 @@ end;
 $$;
 
 -- Anonimni istraživački zapisi (Tier 1) za izabrani period.
-create or replace function public.admin_research(p_from timestamptz default null, p_to timestamptz default null)
+-- (drop jer se promenio oblik rezultata; create or replace to ne dozvoljava)
+drop function if exists public.admin_research(timestamptz, timestamptz);
+create function public.admin_research(p_from timestamptz default null, p_to timestamptz default null)
 returns table (pseudonym text, "timestamp" timestamptz, period text,
-               dryness smallint, clarity smallint, fatigue smallint, redness smallint, light smallint)
+               dryness smallint, clarity smallint, fatigue smallint, redness smallint, light smallint,
+               symptoms text[], urgency text)
 language plpgsql stable security definer set search_path = '' as $$
 #variable_conflict use_column
 begin
   perform private.require_admin();
   return query
-    select r.pseudonym, r.timestamp, r.period, r.dryness, r.clarity, r.fatigue, r.redness, r.light
+    select r.pseudonym, r.timestamp, r.period, r.dryness, r.clarity, r.fatigue, r.redness, r.light, r.symptoms, r.urgency
     from research.records r
     where (p_from is null or r.timestamp >= p_from)
       and (p_to is null or r.timestamp < p_to)

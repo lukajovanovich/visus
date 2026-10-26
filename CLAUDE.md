@@ -33,14 +33,14 @@ All metrics are **subjective only** — no clinical measurements (patients canno
 - Collected from all users who **opt in** during onboarding
 - Contains **no PII whatsoever**: no name, no email, no device ID
 - User identity replaced by a one-way hash (pseudonym) — cannot be reversed to identify the individual
-- Contains only: pseudonym, timestamp, period (morning/working/evening), 5 metric scores, optional eye image crop
+- Contains only: pseudonym, timestamp, period (morning/working/evening), 5 metric scores, symptom checklist, urgency, optional eye image crop (symptoms + urgency added in consent v1.1)
 - Purpose: scientific research only
 - Accessible to: research team only (admin panel)
 - Retention: indefinite (research archive)
 
 ### Tier 2 — Personal Data (GDPR-designed from day one)
 - Collected only from **authenticated users** with **explicit, granular consent**
-- Contains: user identity, full diary entries with notes, notification preferences, demographics
+- Contains: user identity, full diary entries with notes, notification preferences, profile (demographics + eye-health history: medication use, surgeries, glasses/lenses + diopter per eye, conditions, screen time, allergy – all optional)
 - GDPR principles applied at design level:
   - **Lawful basis:** explicit consent (not legitimate interest)
   - **Purpose limitation:** symptom tracking only; no secondary use without new consent
@@ -56,6 +56,7 @@ All metrics are **subjective only** — no clinical measurements (patients canno
 
 ## Key Product Rules
 - **Streak:** minimum 3 consecutive days; retroactive entries do not count
+- **Each entry also has:** a symptom checklist (`SYMPTOMS` in rules.js: suzenje, krmeljenje, crveno oko, osećaj stranog tela, peckanje, svrab, bol u oku, osećaj pritiska, smanjena vidna oštrina, drugo – optional; "drugo" has a free-text description in `entries.symptom_other` that stays in Tier 2 only – research gets just the `other` flag) and an **urgency** (`usual` / `sudden` / `doctor` – required for new entries). For `sudden`/`doctor` the form shows a "go to an ophthalmologist / 194" warning; the app never notifies a doctor.
 - **3 daily log slots:** Morning / During the day / Evening (internal key: `morning` / `working` / `evening`; UI label "Tokom dana")
 - **Gamification:** XP (entries × 15 + streak × 5), 10 levels, badges, milestone rewards from pharmaceutical sponsor
 - **Sponsor:** Vizim Dom Zdravlja — visible card on home screen + physical reward redemption flow
@@ -99,7 +100,8 @@ Right now Visus is built as a **desktop web app** (sidebar layout, mobile only n
   - RPCs: `claim_reward` (checks XP server-side; XP thresholds duplicated from rules.js), `research_preview`, `delete_account`.
   - Admin (research team): `private.admins` (added only via SQL Editor), RPCs `is_admin`, `admin_overview` (aggregate counts only), `admin_research` (Tier 1 records only). Admins never get Tier 2 personal data.
 - `public/admin.html` + `public/app/admin.js` / `admin.css` – separate admin page at `/admin`; the app sidebar shows an "Admin" link only when `is_admin()` is true (access itself is enforced by the DB): research dashboard + CSV export. Chart shared via `public/app/chart.js`.
-  - Consent version lives in `private.current_consent_version()` **and** `CONSENT_VERSION` in rules.js – change both together.
+  - Consent version lives in `private.current_consent_version()` **and** `CONSENT_VERSION` in rules.js – change both together (currently **1.1**; bump whenever what is collected/shared changes, and list the changes in `renderReconsent`).
+  - Symptom/urgency keys are also hard-coded in the `entries_symptoms_check` / `entries_urgency_check` constraints.
 - Auth: Supabase email+password (PKCE); Google via Supabase provider when `GOOGLE_LOGIN = true`.
 - Reminders: browser notifications while the app tab is open (no push server in the demo).
 - Gamification details chosen by us (not in the original spec, confirm with owner/sponsor): level names + XP thresholds, 5 badges (no badge for research opt-in – consent must not be incentivised), milestone rewards are placeholders.

@@ -6,7 +6,7 @@
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
-import { METRICS, PERIODS, dayKey, addDays, severity } from './rules.js';
+import { METRICS, PERIODS, SYMPTOMS, URGENCY, dayKey, addDays, severity } from './rules.js';
 import { lineChart } from './chart.js';
 
 const ADMIN_URL = location.origin + location.pathname;
@@ -81,6 +81,8 @@ async function loadData() {
     date: dayKey(new Date(r.timestamp)),
     period: r.period,
     scores: Object.fromEntries(METRICS.map((m) => [m.key, r[m.key]])),
+    symptoms: r.symptoms || [],
+    urgency: r.urgency || null,
   }));
 }
 
@@ -165,11 +167,6 @@ function renderDashboard() {
       </div>
     </div>
 
-    <div class="card flat small privacy-note" style="margin-bottom:20px">
-      <span>🔒</span>
-      <span>Ovde nema imena, emailova, beleški ni demografskih podataka. Svaki učesnik je predstavljen pseudonimom (jednosmerni heš), isti za sve njegove zapise.</span>
-    </div>
-
     <div class="grid cols-4">
       <div class="card stat"><div class="label">Korisnika</div><div class="v">${fmtNum(o.users)}</div><div class="hint">završilo podešavanje naloga</div></div>
       <div class="card stat"><div class="label">U istraživanju</div><div class="v">${fmtNum(o.research_participants)}</div><div class="hint">${optInPct}% korisnika</div></div>
@@ -187,6 +184,7 @@ function renderDashboard() {
     ${renderRangeStats(recs)}
     ${renderChart(recs)}
     <div class="grid cols-2" style="margin-top:20px">${renderMetricAverages(recs)}${renderPeriods(recs)}</div>
+    <div class="grid cols-2" style="margin-top:20px">${renderSymptoms(recs)}${renderUrgency(recs)}</div>
     <div style="margin-top:20px">${renderDistribution(recs)}</div>
     <div class="grid cols-2" style="margin-top:20px">${renderParticipants(recs)}${renderLatest(recs)}</div>`;
 }
@@ -255,6 +253,38 @@ function renderPeriods(recs) {
     </div>`;
 }
 
+function renderSymptoms(recs) {
+  const rows = SYMPTOMS.map((x) => ({ x, n: recs.filter((r) => r.symptoms.includes(x.key)).length })).sort((a, b) => b.n - a.n);
+  return `
+    <div class="card">
+      <h2>Prisutni simptomi</h2>
+      <div class="bars">
+        ${rows.map(({ x, n }) => `<div class="bar-row"><span>${x.name}</span>
+          <div class="bar-track"><span style="width:${(n / recs.length) * 100}%;background:var(--accent)"></span></div>
+          <b title="${fmtNum(n)} zapisa">${Math.round((n / recs.length) * 100)}%</b></div>`).join('')}
+      </div>
+      <p class="small muted" style="margin:14px 0 0">Procenat zapisa u kojima je simptom označen.</p>
+    </div>`;
+}
+
+function renderUrgency(recs) {
+  const withU = recs.filter((r) => r.urgency);
+  const colors = { usual: 'var(--s1)', sudden: 'var(--s4)', doctor: 'var(--s5)' };
+  return `
+    <div class="card">
+      <h2>Stanje hitnosti</h2>
+      ${withU.length ? `<div class="bars">
+        ${URGENCY.map((u) => {
+          const n = withU.filter((r) => r.urgency === u.key).length;
+          return `<div class="bar-row"><span>${u.icon} ${u.name}</span>
+            <div class="bar-track"><span style="width:${(n / withU.length) * 100}%;background:${colors[u.key]}"></span></div>
+            <b title="${fmtNum(n)} zapisa">${Math.round((n / withU.length) * 100)}%</b></div>`;
+        }).join('')}
+      </div>` : '<div class="empty small">Još nema zapisa sa stanjem hitnosti.</div>'}
+      ${withU.length < recs.length ? `<p class="small muted" style="margin:14px 0 0">${fmtNum(recs.length - withU.length)} starijih zapisa nema ovaj podatak.</p>` : ''}
+    </div>`;
+}
+
 function renderDistribution(recs) {
   return `
     <div class="card">
@@ -297,10 +327,11 @@ function renderLatest(recs) {
     <div class="card">
       <div class="card-head"><h2>Poslednji zapisi</h2></div>
       <div class="table-wrap"><table class="table">
-        <thead><tr><th>Vreme</th><th>Doba</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}</tr></thead>
+        <thead><tr><th>Vreme</th><th>Doba</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th>Stanje</th></tr></thead>
         <tbody>${latest.map((r) => `<tr>
           <td>${fmtDateTime(r.timestamp)}</td><td>${periodOf(r.period)?.emoji || ''}</td>
           ${METRICS.map((m) => `<td><span class="pill-score" style="background:${sevColor(severity(m, r.scores[m.key]))}">${r.scores[m.key]}</span></td>`).join('')}
+          <td title="${URGENCY.find((u) => u.key === r.urgency)?.name || ''}">${URGENCY.find((u) => u.key === r.urgency)?.icon || '–'}</td>
         </tr>`).join('')}</tbody>
       </table></div>
     </div>`;
@@ -309,8 +340,12 @@ function renderLatest(recs) {
 /* ---------- CSV izvoz (za Excel / Power BI) ---------- */
 
 function exportCsv() {
-  const cols = ['pseudonym', 'timestamp', 'period', ...METRICS.map((m) => m.key)];
-  const lines = [cols.join(',')].concat(ui.records.map((r) => [r.pseudonym, r.timestamp, r.period, ...METRICS.map((m) => r.scores[m.key])].join(',')));
+  // Simptomi: jedna kolona 0/1 po simptomu, da bi se lako analizirali u Excel-u / Power BI-ju.
+  const cols = ['pseudonym', 'timestamp', 'period', ...METRICS.map((m) => m.key), 'urgency', ...SYMPTOMS.map((x) => `symptom_${x.key}`)];
+  const lines = [cols.join(',')].concat(ui.records.map((r) => [
+    r.pseudonym, r.timestamp, r.period, ...METRICS.map((m) => r.scores[m.key]), r.urgency ?? '',
+    ...SYMPTOMS.map((x) => (r.symptoms.includes(x.key) ? 1 : 0)),
+  ].join(',')));
   // BOM da bi Excel ispravno prepoznao UTF-8
   const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
