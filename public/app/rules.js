@@ -39,14 +39,6 @@ export const LEVELS = [
   { n: 10, name: 'Legenda', xp: 2300 },
 ];
 
-// Placeholder rewards – to be confirmed with the sponsor.
-export const MILESTONES = [
-  { id: 'm3', level: 3, icon: '💧', title: 'Veštačke suze', desc: 'Pakovanje kapi za vlaženje očiju' },
-  { id: 'm5', level: 5, icon: '👁️', title: 'Pregled vida', desc: 'Besplatan osnovni oftalmološki pregled' },
-  { id: 'm7', level: 7, icon: '🕶️', title: '20% popusta', desc: 'Na naočare za sunce ili zaštitu od ekrana' },
-  { id: 'm10', level: 10, icon: '🎁', title: 'Komplet za negu očiju', desc: 'Kapi, maramice i topla maska za oči' },
-];
-
 export const BADGES = [
   { id: 'first', icon: '✨', name: 'Prvi unos', desc: 'Sačuvajte prvi unos', test: (s) => s.entryCount >= 1 },
   { id: 'fullday', icon: '🌗', name: 'Pun dan', desc: 'Sva 3 unosa u jednom danu', test: (s) => s.fullDays >= 1 },

@@ -59,7 +59,7 @@ All metrics are **subjective only** — no clinical measurements (patients canno
 - **Each entry also has:** a symptom checklist (`SYMPTOMS` in rules.js: suzenje, krmeljenje, crveno oko, osećaj stranog tela, peckanje, svrab, bol u oku, osećaj pritiska, smanjena vidna oštrina, drugo – optional; "drugo" has a free-text description in `entries.symptom_other` that stays in Tier 2 only – research gets just the `other` flag) and an **urgency** (`usual` / `sudden` / `doctor` – required for new entries). For `sudden`/`doctor` the form shows a "go to an ophthalmologist / 194" warning; the app never notifies a doctor.
 - **3 daily log slots:** Morning / During the day / Evening (internal key: `morning` / `working` / `evening`; UI label "Tokom dana")
 - **Gamification:** XP (entries × 15 + streak × 5), 10 levels, badges, milestone rewards from pharmaceutical sponsor
-- **Sponsor:** Vizim Dom Zdravlja — visible card on home screen + physical reward redemption flow
+- **Sponsor:** Vizim Dom Zdravlja — visible card on home screen + physical reward redemption flow. **Temporarily removed from the web app (2026-10-26, owner's request):** no Nagrade page, sponsor card or reward claiming; streak/XP/levels/badges stay. DB parts (`redemptions`, `claim_reward`) are left in place, unused; the old UI is in git history.
 - **Notifications:** 3× daily configurable reminders (morning, mid-day, evening)
 - **Optional selfie:** eye region extracted via on-device ML, only the crop is uploaded — original photo never leaves the device
 
@@ -104,7 +104,7 @@ Right now Visus is built as a **desktop web app** (sidebar layout, mobile only n
   - Symptom/urgency keys are also hard-coded in the `entries_symptoms_check` / `entries_urgency_check` constraints.
 - Auth: Supabase email+password (PKCE); Google via Supabase provider when `GOOGLE_LOGIN = true`.
 - Reminders: browser notifications while the app tab is open (no push server in the demo).
-- Gamification details chosen by us (not in the original spec, confirm with owner/sponsor): level names + XP thresholds, 5 badges (no badge for research opt-in – consent must not be incentivised), milestone rewards are placeholders.
+- Gamification details chosen by us (not in the original spec, confirm with owner/sponsor): level names + XP thresholds, 5 badges (no badge for research opt-in – consent must not be incentivised). Sponsor rewards currently removed (see Key Product Rules).
 - Local dev: `npm run dev` → http://localhost:3000 (zero-dependency static server in `scripts/serve.js`; applies the same headers as `vercel.json`).
 - Hosting: Vercel, static (`vercel.json`: output `public/`, clean URLs, security headers incl. CSP). The CSP `connect-src` hard-codes the Supabase project URL – update it if the project changes.
 

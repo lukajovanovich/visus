@@ -8,7 +8,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
 import {
   CONSENT_VERSION, STREAK_MIN, XP_PER_ENTRY, XP_PER_STREAK_DAY, NOTE_MAX,
-  METRICS, PERIODS, LEVELS, MILESTONES, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI, DIOPTER_KEYS,
+  METRICS, PERIODS, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI, DIOPTER_KEYS,
   SYMPTOMS, URGENCY, SYMPTOM_OTHER_MAX,
   dayKey, parseKey, addDays, severity, computeStats,
 } from './rules.js';
@@ -83,17 +83,15 @@ function entryFromRow(r) {
   };
 }
 
-const redemptionFromRow = (r) => ({ milestoneId: r.milestone_id, code: r.code, createdAt: r.created_at, redeemedAt: r.redeemed_at });
 
 const researchHistory = (consents) => consents
   .filter((c) => c.kind === 'research')
   .map((c) => ({ optIn: c.granted, at: c.created_at, consentVersion: c.version }));
 
 async function loadState(user) {
-  const [profile, entries, redemptions, consents, isAdmin] = await Promise.all([
+  const [profile, entries, consents, isAdmin] = await Promise.all([
     sb.from('profiles').select('*').eq('id', user.id).single().then(check),
     fetchAll(() => sb.from('entries').select('*').order('date').order('period')),
-    sb.from('redemptions').select('*').order('created_at').then(check),
     sb.from('consent_events').select('*').order('id').then(check),
     // Samo za prikaz linka ka /admin; pravi pristup proverava baza na admin strani.
     sb.rpc('is_admin').then(check).catch(() => false),
@@ -118,7 +116,6 @@ async function loadState(user) {
     demographics: profile.demographics || {},
     notifications: profile.notifications,
     entries: entries.map(entryFromRow),
-    redemptions: redemptions.map(redemptionFromRow),
     isAdmin: isAdmin === true,
   };
 }
@@ -178,7 +175,7 @@ const sevColor = (sev) => `var(--s${Math.min(5, Math.max(1, Math.round(sev)))})`
 const entrySeverity = (e) => METRICS.reduce((sum, m) => sum + severity(m, e.scores[m.key]), 0) / METRICS.length;
 const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
 // Gost vidi isti interfejs kao korisnik, nad praznim (nesačuvanim) nalogom.
-const GUEST_VIEW = { user: { id: null, name: '', email: '' }, entries: [], redemptions: [], research: { optIn: false } };
+const GUEST_VIEW = { user: { id: null, name: '', email: '' }, entries: [], research: { optIn: false } };
 const view = () => state || GUEST_VIEW;
 const findEntry = (date, period) => view().entries.find((e) => e.date === date && e.period === period);
 const entriesOn = (date) => view().entries.filter((e) => e.date === date);
@@ -232,7 +229,6 @@ const NAV = [
   { path: '/home', icon: '🏠', label: 'Početna' },
   { path: '/history', icon: '📅', label: 'Istorija' },
   { path: '/trends', icon: '📈', label: 'Trendovi' },
-  { path: '/rewards', icon: '🏆', label: 'Nagrade' },
   { path: '/settings', icon: '⚙️', label: 'Podešavanja' },
 ];
 
@@ -244,7 +240,6 @@ const ROUTES = {
   '/log': renderLog,
   '/history': renderHistory,
   '/trends': renderTrends,
-  '/rewards': renderRewards,
   '/settings': renderSettings,
 };
 const GATE = ['/login', '/onboarding', '/reconsent'];
@@ -369,7 +364,7 @@ function renderLogin() {
         <ul>
           <li><span>📝</span> Pet simptoma, ocena od 1 do 5</li>
           <li><span>📈</span> Trendovi i istorija na jednom mestu</li>
-          <li><span>🏆</span> Nagrade partnera Vizim Dom Zdravlja</li>
+          <li><span>🩺</span> Upozorenje kada je potreban oftalmolog</li>
           <li><span>🔒</span> Podaci se čuvaju u EU, pod vašom kontrolom</li>
         </ul>
       </div>
@@ -666,12 +661,12 @@ function renderHome() {
 
         <div class="card">
           <div class="card-head"><h2>Poslednji unosi</h2><a class="small" href="#/history">Istorija →</a></div>
-          ${recent.length ? entriesTable(recent) : '<div class="empty small">Još nema unosa. Počnite današnjim unosom iznad.</div>'}
+          ${recent.length ? entriesTable(recent, { note: false }) : '<div class="empty small">Još nema unosa. Počnite današnjim unosom iznad.</div>'}
         </div>
       </div>
 
       <div class="stack">
-        <a href="#/rewards" class="card hero-card" style="display:block;text-decoration:none">
+        <div class="card hero-card">
           <div class="row between">
             <div class="streak-num">🔥 ${s.streak}</div>
             <span class="level-pill">Nivo ${s.level.n}</span>
@@ -679,8 +674,7 @@ function renderHome() {
           <div class="muted small" style="margin-top:6px">${s.streak === 1 ? 'dan' : 'dana'} zaredom · ${streakText(s)}</div>
           <div style="margin-top:18px" class="row between small"><span>${s.level.name}</span><span>${s.xp} XP${s.next ? ' / ' + s.next.xp : ''}</span></div>
           <div class="progress" style="margin-top:6px"><span style="width:${Math.round(s.progress * 100)}%"></span></div>
-        </a>
-        ${sponsorCard(s)}
+        </div>
         <div class="card">
           <div class="card-head"><h2>Bedževi</h2><span class="small muted">${s.badges.length}/${BADGES.length}</span></div>
           <div class="row" style="flex-wrap:wrap;gap:10px">
@@ -699,22 +693,6 @@ function streakText(s) {
   return 'unesite simptome 3 dana zaredom';
 }
 
-function sponsorCard(s) {
-  const next = MILESTONES.find((m) => m.level > s.level.n);
-  const claimable = MILESTONES.find((m) => m.level <= s.level.n && !view().redemptions.some((r) => r.milestoneId === m.id));
-  let body;
-  if (claimable) {
-    body = `<div style="margin:8px 0 12px"><strong>🎉 Nagrada je spremna: ${claimable.title}</strong></div><a class="btn btn-sm btn-on-dark" href="#/rewards">Preuzmi nagradu</a>`;
-  } else if (next) {
-    const target = LEVELS[next.level - 1].xp;
-    body = `<div class="small muted" style="margin:6px 0 10px">Sledeća nagrada: <b style="color:#fff">${next.title}</b> na nivou ${next.level} · još ${target - s.xp} XP</div>
-      <div class="progress"><span style="width:${Math.min(100, (s.xp / target) * 100)}%"></span></div>`;
-  } else {
-    body = '<div class="small muted">Osvojili ste sve nagrade. Hvala vam! 💚</div>';
-  }
-  return `<div class="card sponsor-card"><div class="sponsor-badge">Partner programa</div><h3 style="margin:2px 0 0;font-size:1.1rem">Vizim Dom Zdravlja</h3>${body}</div>`;
-}
-
 function scoreBars(e) {
   return `<div class="score-bars">${METRICS.map((m) => {
     const v = e.scores[m.key];
@@ -722,9 +700,10 @@ function scoreBars(e) {
   }).join('')}</div>`;
 }
 
-function entriesTable(list) {
+// Na početnoj strani je tabela uža, pa se beleška ne prikazuje (vidi se u Istoriji).
+function entriesTable(list, { note = true } = {}) {
   return `<div class="table-wrap"><table class="table">
-    <thead><tr><th>Datum</th><th>Doba dana</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th title="Stanje">Stanje</th><th>Simptomi</th><th>Beleška</th></tr></thead>
+    <thead><tr><th>Datum</th><th>Doba dana</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th title="Stanje">Stanje</th><th>Simptomi</th>${note ? '<th>Beleška</th>' : ''}</tr></thead>
     <tbody>${list.map((e) => `
       <tr class="clickable" data-action="open-log" data-date="${e.date}" data-period="${e.period}">
         <td>${relDay(e.date)}${e.retroactive ? ' <span class="tag warn">naknadno</span>' : ''}</td>
@@ -732,7 +711,7 @@ function entriesTable(list) {
         ${METRICS.map((m) => `<td><span class="pill-score" style="background:${sevColor(severity(m, e.scores[m.key]))}">${e.scores[m.key]}</span></td>`).join('')}
         <td title="${urgencyOf(e.urgency)?.name || ''}">${urgencyOf(e.urgency)?.icon || '–'}</td>
         <td class="note-cell">${e.symptoms.length ? esc(e.symptoms.map((k) => symptomLabel(e, k)).join(', ')) : '–'}</td>
-        <td class="note-cell">${esc(e.note) || '–'}</td>
+        ${note ? `<td class="note-cell">${esc(e.note) || '–'}</td>` : ''}
       </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -943,16 +922,11 @@ function leaveLog() {
 }
 
 function showLevelUp(s) {
-  const m = MILESTONES.find((x) => x.level === s.level.n);
   openModal(`
     <div class="confetti">🎉</div>
     <h2 class="center">Novi nivo: ${s.level.n}</h2>
     <p class="center muted">Postali ste <b>${s.level.name}</b>. Samo tako nastavite!</p>
-    ${m ? `<div class="card sponsor-card"><div class="sponsor-badge">Vizim Dom Zdravlja</div><strong>${m.icon} Otključali ste nagradu: ${m.title}</strong><div class="small muted">${m.desc}</div></div>` : ''}
-    <div class="modal-actions">
-      <button class="btn btn-ghost" data-action="close-modal">Zatvori</button>
-      ${m ? '<button class="btn btn-primary" data-action="close-modal" data-go="/rewards">Pogledaj nagradu</button>' : ''}
-    </div>`);
+    <div class="modal-actions"><button class="btn btn-primary" data-action="close-modal">Super</button></div>`);
 }
 
 /* ---------- Istorija ---------- */
@@ -1137,75 +1111,6 @@ function symptomFrequency(list) {
     <p class="small muted" style="margin:14px 0 0">Procenat unosa u kojima je simptom označen.</p>`;
 }
 
-/* ---------- Nagrade ---------- */
-
-function renderRewards() {
-  const s = stats();
-  return `
-    <div class="page-head"><div><h1>Nagrade</h1><div class="sub">Redovni unosi donose XP, nivoe i nagrade partnera.</div></div></div>
-
-    <div class="grid main-side" style="margin-bottom:20px">
-      <div class="card hero-card">
-        <div class="row between"><span class="level-pill">Nivo ${s.level.n}</span><span>${s.xp} XP</span></div>
-        <h2 style="margin:14px 0 4px;color:#fff;font-size:1.6rem">${s.level.name}</h2>
-        <div class="muted">${s.next ? `Još ${s.next.xp - s.xp} XP do nivoa ${s.next.n} (${s.next.name})` : 'Dostigli ste najviši nivo!'}</div>
-        <div class="progress" style="margin-top:14px"><span style="width:${Math.round(s.progress * 100)}%"></span></div>
-      </div>
-      <div class="card">
-        <h2>Kako se računa XP</h2>
-        <p class="small muted" style="margin:0 0 12px">${XP_PER_ENTRY} XP po unosu + ${XP_PER_STREAK_DAY} XP za svaki dan aktivnog niza. Niz je aktivan od ${STREAK_MIN} uzastopna dana. Naknadni unosi se ne računaju u niz.</p>
-        <div class="row" style="gap:20px"><span>📝 <b>${s.entryCount}</b> unosa</span><span>🔥 <b>${s.streak}</b> dana (rekord ${s.bestStreak})</span></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-bottom:20px">
-      <h2>Nivoi</h2>
-      <div class="level-track">
-        ${LEVELS.map((l) => `<div class="level-step ${l.n === s.level.n ? 'cur' : l.n < s.level.n ? 'done' : ''}" title="${l.name}"><b>${l.n}</b>${l.xp} XP${MILESTONES.some((m) => m.level === l.n) ? ' 🎁' : ''}</div>`).join('')}
-      </div>
-    </div>
-
-    <h2 style="margin-top:28px">Nagrade partnera · Vizim Dom Zdravlja</h2>
-    <div class="grid cols-4" style="margin-bottom:28px">
-      ${MILESTONES.map((m) => {
-        const r = state.redemptions.find((x) => x.milestoneId === m.id);
-        const unlocked = s.level.n >= m.level;
-        const action = r
-          ? `<button class="btn btn-secondary btn-sm" data-action="show-code" data-id="${m.id}">Prikaži kod</button>`
-          : unlocked
-            ? `<button class="btn btn-primary btn-sm" data-action="claim" data-id="${m.id}">Preuzmi</button>`
-            : `<span class="tag">Otključava se na nivou ${m.level}</span>`;
-        return `<div class="card milestone ${unlocked || r ? '' : 'locked'}">
-          <div class="m-icon">${m.icon}</div>
-          <div><strong>${m.title}</strong><div class="small muted">${m.desc}</div></div>
-          ${r ? `<div class="small" style="color:var(--primary)">✓ ${r.redeemedAt ? 'Iskorišćeno' : 'Preuzeto'}</div>` : ''}
-          <div>${action}</div>
-        </div>`;
-      }).join('')}
-    </div>
-
-    <h2>Bedževi <span class="small muted">${s.badges.length}/${BADGES.length}</span></h2>
-    <div class="badge-grid">
-      ${BADGES.map((b) => `<div class="badge ${s.badges.includes(b.id) ? '' : 'locked'}"><span class="b-icon">${b.icon}</span><strong>${b.name}</strong><div class="muted">${b.desc}</div></div>`).join('')}
-    </div>`;
-}
-
-function showCode(milestoneId) {
-  const m = MILESTONES.find((x) => x.id === milestoneId);
-  const r = state.redemptions.find((x) => x.milestoneId === milestoneId);
-  openModal(`
-    <h2>${m.icon} ${m.title}</h2>
-    <p class="muted small" style="margin:0">${m.desc}</p>
-    <div class="code-box">${esc(r.code)}</div>
-    <div class="card flat small">
-      <b>Kako preuzeti nagradu</b>
-      <ol class="bullets" style="color:var(--text)"><li>Posetite Vizim Dom Zdravlja</li><li>Pokažite ovaj kod na šalteru</li><li>Kod je jednokratan</li></ol>
-      <div class="muted">Partner vidi samo kod, ne i vaše podatke iz dnevnika.</div>
-    </div>
-    <p class="small muted">Generisano: ${fmtDate(dayKey(new Date(r.createdAt)))}</p>
-    <div class="modal-actions"><button class="btn btn-primary" data-action="close-modal">Zatvori</button></div>`);
-}
-
 /* ---------- Podešavanja ---------- */
 
 function renderSettings() {
@@ -1319,7 +1224,6 @@ function exportData() {
     demographics: state.demographics,
     notifications: state.notifications,
     entries: state.entries,
-    rewards: state.redemptions,
   });
   toast('Podaci su preuzeti');
 }
@@ -1496,14 +1400,6 @@ const actions = {
     ui.trendMetrics.has(k) ? ui.trendMetrics.delete(k) : ui.trendMetrics.add(k);
     render();
   },
-  async claim(el) {
-    const row = check(await sb.rpc('claim_reward', { p_milestone: el.dataset.id }));
-    const r = redemptionFromRow(row);
-    if (!state.redemptions.some((x) => x.milestoneId === r.milestoneId)) state.redemptions.push(r);
-    render();
-    showCode(r.milestoneId);
-  },
-  'show-code'(el) { showCode(el.dataset.id); },
   'close-modal'(el) {
     closeModal();
     if (el.dataset.go) go(el.dataset.go);

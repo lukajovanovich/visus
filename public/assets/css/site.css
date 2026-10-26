@@ -9,7 +9,6 @@
   --primary: #2e7d5b;
   --primary-ink: #ffffff;
   --accent: #4f9d78;
-  --sponsor: #1f5c45;
   --danger: #c2453d;
   --radius: 18px;
   --shadow: 0 10px 30px rgba(60, 50, 20, 0.08);
@@ -80,7 +79,6 @@ a { color: var(--primary); }
 .mock-bar span { display: block; height: 100%; width: 62%; background: var(--primary); }
 .mock-pill { font-size: 0.75rem; padding: 2px 10px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
 .mock-pill.done { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
-.mock-sponsor { background: linear-gradient(135deg, var(--sponsor), var(--primary)); color: #fff; border: 0; }
 
 /* Sections */
 section { padding: 56px 0; }
@@ -102,12 +100,6 @@ section { padding: 56px 0; }
 .tier.personal { border-left-color: var(--primary); }
 .tier ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.95rem; }
 
-.sponsor-band {
-  background: linear-gradient(135deg, var(--sponsor), var(--accent));
-  color: #fff; border-radius: 24px; padding: 32px; display: flex; gap: 24px; align-items: center; justify-content: space-between; flex-wrap: wrap;
-}
-.sponsor-band h2 { margin: 0 0 6px; }
-.sponsor-band p { margin: 0; opacity: .9; }
 
 /* Waitlist */
 .waitlist { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; padding: 32px; max-width: 620px; margin: 0 auto; }
