@@ -86,11 +86,13 @@ const researchHistory = (consents) => consents
   .map((c) => ({ optIn: c.granted, at: c.created_at, consentVersion: c.version }));
 
 async function loadState(user) {
-  const [profile, entries, redemptions, consents] = await Promise.all([
+  const [profile, entries, redemptions, consents, isAdmin] = await Promise.all([
     sb.from('profiles').select('*').eq('id', user.id).single().then(check),
     fetchAll(() => sb.from('entries').select('*').order('date').order('period')),
     sb.from('redemptions').select('*').order('created_at').then(check),
     sb.from('consent_events').select('*').order('id').then(check),
+    // Samo za prikaz linka ka /admin; pravi pristup proverava baza na admin strani.
+    sb.rpc('is_admin').then(check).catch(() => false),
   ]);
 
   if (profile.timezone !== TIMEZONE) {
@@ -113,6 +115,7 @@ async function loadState(user) {
     notifications: profile.notifications,
     entries: entries.map(entryFromRow),
     redemptions: redemptions.map(redemptionFromRow),
+    isAdmin: isAdmin === true,
   };
 }
 
@@ -289,6 +292,7 @@ function renderSidebar(path) {
     <button class="btn btn-primary nav-cta" data-action="new-entry">+ Novi unos</button>
     <nav class="nav">
       ${NAV.map((n) => `<a href="#${n.path}" class="${n.path === path ? 'on' : ''}"><span class="ni">${n.icon}</span>${n.label}</a>`).join('')}
+      ${state?.isAdmin ? '<a href="admin" class="nav-admin"><span class="ni">🔬</span>Admin</a>' : ''}
     </nav>
     <div class="sidebar-foot">${foot}</div>`;
 }

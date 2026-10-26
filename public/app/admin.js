@@ -109,6 +109,7 @@ function renderBar() {
     <header class="admin-bar">
       <a class="brand" href="/"><img src="assets/logo.svg" alt=""><span>Visus</span></a>
       <span class="admin-tag">Admin</span>
+      <a class="btn btn-ghost btn-sm" href="/">← Aplikacija</a>
       <span class="who">${esc(ui.session.user.email)}</span>
       <button class="btn btn-ghost btn-sm" data-action="logout">Odjavi se</button>
     </header>`;

@@ -22,6 +22,8 @@
 
 @media (max-width: 860px) {
   .admin-bar, .admin-main { padding-left: 16px; padding-right: 16px; }
+  .admin-bar { flex-wrap: wrap; gap: 8px; }
   .admin-bar .who { display: none; }
+  .admin-bar .btn:last-child { margin-left: auto; }
   .dist-row { grid-template-columns: 1fr; gap: 4px; }
 }
