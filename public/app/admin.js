@@ -8,11 +8,14 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
 import { METRICS, PERIODS, SYMPTOMS, URGENCY, dayKey, addDays, severity } from './rules.js';
 import { lineChart } from './chart.js';
+import { downloadReportPdf } from './report.js';
 
 const ADMIN_URL = location.origin + location.pathname;
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: true } });
 
 const ui = {
+  tab: 'reports',   // 'reports' = izveštaji pacijenata, 'research' = istraživački podaci
+  reports: [],
   range: 30,        // broj dana, ili null = svi zapisi
   session: null,
   isAdmin: false,
@@ -70,11 +73,13 @@ async function fetchAll(build) {
 
 async function loadData() {
   const from = ui.range ? new Date(Date.now() - ui.range * 864e5).toISOString() : null;
-  const [overview, rows] = await Promise.all([
+  const [overview, rows, reports] = await Promise.all([
     sb.rpc('admin_overview').then(check),
     fetchAll(() => sb.rpc('admin_research', { p_from: from, p_to: null })),
+    sb.rpc('admin_reports').then(check),
   ]);
   ui.overview = overview;
+  ui.reports = reports;
   ui.records = rows.map((r) => ({
     pseudonym: r.pseudonym,
     timestamp: r.timestamp,
@@ -153,6 +158,40 @@ function renderNoAccess() {
 }
 
 function renderDashboard() {
+  const tabs = `
+    <div class="seg admin-tabs">
+      <button class="${ui.tab === 'reports' ? 'on' : ''}" data-action="tab" data-value="reports">📄 Izveštaji pacijenata${ui.reports.length ? ` (${ui.reports.length})` : ''}</button>
+      <button class="${ui.tab === 'research' ? 'on' : ''}" data-action="tab" data-value="research">🔬 Istraživački podaci</button>
+    </div>`;
+  return tabs + (ui.tab === 'reports' ? renderReportsTab() : renderResearchTab());
+}
+
+function renderReportsTab() {
+  const list = ui.reports;
+  const count = (r, u) => (r.data?.entries || []).filter((e) => e.urgency === u).length;
+  return `
+    <div class="page-head">
+      <div><h1>Izveštaji pacijenata</h1><div class="sub">Izveštaje su pacijenti sami poslali iz aplikacije (poslednjih 7 dana pre slanja).</div></div>
+    </div>
+    <div class="card flat small" style="margin-bottom:20px">⚠️ Izveštaji sadrže lične i zdravstvene podatke pacijenata. Koristite ih samo za pregled i lečenje. Pacijent izveštaj može da povuče, i tada nestaje sa ove liste.</div>
+    ${!list.length ? '<div class="card empty"><div class="big">📄</div>Još nema poslatih izveštaja.</div>' : `
+    <div class="card"><div class="table-wrap"><table class="table">
+      <thead><tr><th>Primljeno</th><th>Pacijent</th><th>Period</th><th>Unosa</th><th>Hitno</th><th></th></tr></thead>
+      <tbody>${list.map((r) => {
+        const doctor = count(r, 'doctor'), sudden = count(r, 'sudden');
+        return `<tr>
+          <td>${fmtDateTime(r.created_at)}</td>
+          <td><strong>${esc(r.data?.patient?.name || '–')}</strong><div class="small muted">${esc(r.data?.patient?.email || '')}</div></td>
+          <td>${fmtDay(r.period_from)} – ${fmtDay(r.period_to)}</td>
+          <td>${(r.data?.entries || []).length}</td>
+          <td>${doctor ? `<span class="tag urgency-doctor">🔴 Potreban oftalmolog ×${doctor}</span>` : ''}${sudden ? ` <span class="tag urgency-sudden">🟠 Naglo ×${sudden}</span>` : ''}${!doctor && !sudden ? '<span class="muted">–</span>' : ''}</td>
+          <td><button class="btn btn-primary btn-sm" data-action="report-pdf" data-id="${r.id}">⬇️ Preuzmi PDF</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div></div>`}`;
+}
+
+function renderResearchTab() {
   const o = ui.overview;
   const recs = ui.records;
   const rangeLabel = ui.range ? `poslednjih ${ui.range} dana` : 'svi zapisi';
@@ -360,6 +399,11 @@ function exportCsv() {
 /* ---------- Događaji ---------- */
 
 const actions = {
+  tab(el) { ui.tab = el.dataset.value; render(); },
+  async 'report-pdf'(el) {
+    await downloadReportPdf(ui.reports.find((r) => r.id === el.dataset.id).data);
+    toast('PDF je preuzet');
+  },
   async range(el) {
     ui.range = el.dataset.value ? Number(el.dataset.value) : null;
     await loadData();

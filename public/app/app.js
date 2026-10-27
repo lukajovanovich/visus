@@ -9,10 +9,11 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
 import {
   CONSENT_VERSION, STREAK_MIN, XP_PER_ENTRY, XP_PER_STREAK_DAY, NOTE_MAX,
   METRICS, PERIODS, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI, DIOPTER_KEYS,
-  SYMPTOMS, URGENCY, SYMPTOM_OTHER_MAX,
+  SYMPTOMS, URGENCY, SYMPTOM_OTHER_MAX, CLINIC, EMERGENCY_PHONE,
   dayKey, parseKey, addDays, severity, computeStats,
 } from './rules.js';
 import { lineChart } from './chart.js';
+import { downloadReportPdf } from './report.js';
 
 const MONTHS = ['januar', 'februar', 'mart', 'april', 'maj', 'jun', 'jul', 'avgust', 'septembar', 'oktobar', 'novembar', 'decembar'];
 const DOW = ['nedelja', 'ponedeljak', 'utorak', 'sreda', 'četvrtak', 'petak', 'subota'];
@@ -42,6 +43,7 @@ const ui = {
   afterNav: null,
   busy: false,
   menuOpen: false,
+  sentReports: null, // izveštaji poslati lekaru (učitavaju se na strani Izveštaj)
 };
 
 /* ---------- Podaci (Supabase) ---------- */
@@ -229,6 +231,7 @@ const NAV = [
   { path: '/home', icon: '🏠', label: 'Početna' },
   { path: '/history', icon: '📅', label: 'Istorija' },
   { path: '/trends', icon: '📈', label: 'Trendovi' },
+  { path: '/report', icon: '📄', label: 'Izveštaj' },
   { path: '/settings', icon: '⚙️', label: 'Podešavanja' },
 ];
 
@@ -240,6 +243,7 @@ const ROUTES = {
   '/log': renderLog,
   '/history': renderHistory,
   '/trends': renderTrends,
+  '/report': renderReport,
   '/settings': renderSettings,
 };
 const GATE = ['/login', '/onboarding', '/reconsent'];
@@ -681,6 +685,7 @@ function renderHome() {
             ${BADGES.map((b) => { const got = s.badges.includes(b.id); return `<span class="badge-icon ${got ? '' : 'locked'}" tabindex="0" data-tip="${b.name}${got ? '' : ' · zaključano'}" aria-label="${b.name}">${b.icon}</span>`; }).join('')}
           </div>
         </div>
+        ${state ? `<div class="card flat small">📄 <b>Idete kod oftalmologa?</b> <span class="muted">Pošaljite lekaru izveštaj o poslednjih 7 dana.</span> <a href="#/report">Izveštaj za lekara →</a></div>` : ''}
         ${!state ? `<div class="card flat small">👋 <b>Dobro došli!</b> <span class="muted">Dodajte prvi unos. Za čuvanje unosa potrebna je besplatna prijava.</span></div>` : ''}
         ${view().entries.length === 0 ? `<div class="card flat small muted">💡 Ocenjujte kako se oči osećaju <b>u tom trenutku</b>. Nema tačnih i pogrešnih odgovora, važna je redovnost.</div>` : ''}
       </div>
@@ -858,7 +863,8 @@ function renderLog(params) {
         <div class="alert">
           <strong>⚠️ Ako je hitno, ne čekajte.</strong>
           Kod naglog pada vida, jakog bola u oku, bljeskova, „zavese“ ili senke u vidnom polju, ili povrede oka,
-          odmah se javite oftalmologu ili hitnoj pomoći (<b>194</b>). Visus ne obaveštava lekara o vašim unosima.
+          odmah se javite oftalmologu ili hitnoj pomoći (<b>${EMERGENCY_PHONE}</b>). Visus ne obaveštava lekara o vašim unosima.
+          <div style="margin-top:12px">${callButton()}</div>
         </div>` : ''}
       </div>
       </div>
@@ -883,6 +889,25 @@ function renderLog(params) {
     </div>`;
 
   return body;
+}
+
+function callButton() {
+  return `<a class="btn btn-call" href="tel:${CLINIC.tel}">📞 Pozovite ${CLINIC.phone}</a>`;
+}
+
+// Iskače kada korisnik izabere "Potreban oftalmolog".
+function showClinicModal() {
+  openModal(`
+    <div class="modal-icon">🩺</div>
+    <h2 class="center">Potreban vam je oftalmolog?</h2>
+    <p class="center muted">Zakažite pregled u ${CLINIC.name}.</p>
+    ${callButton().replace('class="btn btn-call"', 'class="btn btn-call btn-block"')}
+    <div class="alert">
+      <strong>Hitan slučaj?</strong>
+      Kod naglog pada vida, jakog bola, povrede oka ili „zavese“ u vidnom polju pozovite hitnu pomoć
+      <a href="tel:${EMERGENCY_PHONE}"><b>${EMERGENCY_PHONE}</b></a> ili idite u najbližu hitnu službu.
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Nastavi sa unosom</button></div>`);
 }
 
 function isDraftComplete(d) {
@@ -1111,6 +1136,77 @@ function symptomFrequency(list) {
     <p class="small muted" style="margin:14px 0 0">Procenat unosa u kojima je simptom označen.</p>`;
 }
 
+/* ---------- Izveštaj za lekara ---------- */
+
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()}. u ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+async function loadSentReports() {
+  try {
+    ui.sentReports = check(await sb.from('shared_reports').select('id, created_at, period_from, period_to, data').order('created_at', { ascending: false }));
+  } catch (err) {
+    ui.sentReports = [];
+    handleError(err);
+  }
+  if (parseHash().path === '/report') render();
+}
+
+function renderReport() {
+  if (ui.sentReports === null) { ui.sentReports = 'loading'; loadSentReports(); }
+  const t = todayKey();
+  const from = addDays(t, -6);
+  const week = state.entries.filter((e) => e.date >= from && e.date <= t)
+    .sort((a, b) => (b.date + b.period).localeCompare(a.date + a.period));
+  const count = (u) => week.filter((e) => e.urgency === u).length;
+  const sent = Array.isArray(ui.sentReports) ? ui.sentReports : [];
+
+  return `
+    <div class="page-head">
+      <div><h1>Izveštaj za lekara</h1>
+        <div class="sub">Vaši unosi iz poslednjih 7 dana (${fmtDate(from, false)} – ${fmtDate(t, false)}) kao PDF dokument, za pregled kod oftalmologa.</div></div>
+    </div>
+
+    <div class="grid main-side">
+      <div class="stack">
+        <div class="grid cols-4">
+          <div class="card stat"><div class="label">Unosa</div><div class="v">${week.length}</div></div>
+          <div class="card stat"><div class="label">Dana sa unosom</div><div class="v">${new Set(week.map((e) => e.date)).size}<span class="small muted"> / 7</span></div></div>
+          <div class="card stat"><div class="label">Naglo nastali</div><div class="v" style="${count('sudden') ? 'color:var(--s4)' : ''}">${count('sudden')}</div></div>
+          <div class="card stat"><div class="label">Potreban oftalmolog</div><div class="v" style="${count('doctor') ? 'color:var(--s5)' : ''}">${count('doctor')}</div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Unosi koji ulaze u izveštaj</h2><span class="small muted">${week.length}</span></div>
+          ${week.length ? entriesTable(week, { note: false }) + '<p class="small muted" style="margin:12px 0 0">Beleške su takođe uključene u izveštaj.</p>' : '<div class="empty small">Nemate unosa u poslednjih 7 dana. Izveštaj će biti prazan.</div>'}
+        </div>
+      </div>
+
+      <div class="card side-panel">
+        <h2>Šta želite da uradite?</h2>
+        <button class="btn btn-primary btn-block" data-action="report-send" ${week.length ? '' : 'disabled'}>📤 Pošalji lekaru</button>
+        <p class="small muted" style="margin:8px 0 18px">Izveštaj dobija tim ${CLINIC.name}. Šalje se tek kada potvrdite.</p>
+        <button class="btn btn-ghost btn-block" data-action="report-download">⬇️ Preuzmi PDF</button>
+        <p class="small muted" style="margin:8px 0 0">PDF ostaje kod vas: možete ga odštampati ili poslati emailom.</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <div class="card-head"><h2>Poslati izveštaji</h2>${sent.length ? `<span class="small muted">${sent.length}</span>` : ''}</div>
+      ${ui.sentReports === 'loading' ? '<div class="empty small">Učitavanje…</div>'
+        : !sent.length ? '<div class="empty small">Još niste poslali nijedan izveštaj.</div>'
+        : `<div class="sent-list">${sent.map((r) => `
+          <div class="sent-row">
+            <div class="grow"><strong>Poslato ${fmtDateTime(r.created_at)}</strong>
+              <div class="small muted">Period ${fmtDate(r.period_from, false)} – ${fmtDate(r.period_to, false)} · ${(r.data?.entries || []).length} unosa</div></div>
+            <button class="btn btn-ghost btn-sm" data-action="report-pdf" data-id="${r.id}">⬇️ PDF</button>
+            <button class="btn btn-danger btn-sm" data-action="report-withdraw" data-id="${r.id}">Povuci</button>
+          </div>`).join('')}</div>`}
+      <p class="small muted" style="margin:14px 0 0">Kada povučete izveštaj, lekar ga više ne vidi u Visus-u. Ako ga je već preuzeo, ta kopija ostaje kod njega.</p>
+    </div>`;
+}
+
 /* ---------- Podešavanja ---------- */
 
 function renderSettings() {
@@ -1269,7 +1365,7 @@ function handleBind(el) {
 function signedOut() {
   state = null;
   setPending(null); // npr. "Odustani" u onboardingu: bez saglasnosti se unos ne čuva
-  Object.assign(ui, { onb: null, draft: null, selDate: null, calMonth: null, demoEdit: null, authTab: 'login' });
+  Object.assign(ui, { onb: null, draft: null, selDate: null, calMonth: null, demoEdit: null, sentReports: null, authTab: 'login' });
   closeModal();
   go('/home');
 }
@@ -1358,6 +1454,45 @@ const actions = {
     window.scrollTo(0, y);
   },
   'save-entry'() { return saveEntry(); },
+  async 'report-download'() {
+    await downloadReportPdf(check(await sb.rpc('preview_report')));
+    toast('PDF je preuzet');
+  },
+  'report-send'() {
+    const t = todayKey();
+    openModal(`
+      <h2>Poslati izveštaj lekaru?</h2>
+      <p class="muted">Izveštaj za period ${fmtDate(addDays(t, -6), false)} – ${fmtDate(t, false)} dobija tim ${CLINIC.name} (lekari sa pristupom Visus admin strani). Biće poslato:</p>
+      <ul class="bullets">
+        <li>vaše ime i email</li>
+        <li>svi unosi iz poslednjih 7 dana: ocene, simptomi, stanje hitnosti i <b>beleške</b></li>
+        <li>vaš profil (lekovi, operacije, dioptrija, alergije…)</li>
+      </ul>
+      <p class="small muted">Ovo je jednokratno slanje, samo za ovaj izveštaj. Možete ga povući u svakom trenutku.</p>
+      <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Otkaži</button><button class="btn btn-primary" data-action="report-send-yes">Pošalji izveštaj</button></div>`);
+  },
+  async 'report-send-yes'() {
+    const row = check(await sb.rpc('send_report'));
+    ui.sentReports = [row, ...(Array.isArray(ui.sentReports) ? ui.sentReports : [])];
+    closeModal();
+    render();
+    toast('Izveštaj je poslat lekaru ✓');
+  },
+  async 'report-pdf'(el) {
+    const r = ui.sentReports.find((x) => x.id === el.dataset.id);
+    await downloadReportPdf(r.data);
+  },
+  'report-withdraw'(el) {
+    openModal(`<h2>Povući izveštaj?</h2><p class="muted">Lekar ga više neće videti u Visus-u.</p>
+      <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Otkaži</button><button class="btn btn-danger" data-action="report-withdraw-yes" data-id="${el.dataset.id}">Povuci izveštaj</button></div>`);
+  },
+  async 'report-withdraw-yes'(el) {
+    check(await sb.from('shared_reports').delete().eq('id', el.dataset.id));
+    ui.sentReports = ui.sentReports.filter((x) => x.id !== el.dataset.id);
+    closeModal();
+    render();
+    toast('Izveštaj je povučen');
+  },
   symptom(el) {
     const k = el.dataset.value;
     const list = ui.draft.symptoms;
@@ -1374,10 +1509,12 @@ const actions = {
     el.setAttribute('aria-pressed', String(ui.draft.symptoms.includes(k)));
   },
   urgency(el) {
+    const wasDoctor = ui.draft.urgency === 'doctor';
     ui.draft.urgency = el.dataset.value;
     const y = window.scrollY;
     render();
     window.scrollTo(0, y);
+    if (ui.draft.urgency === 'doctor' && !wasDoctor) showClinicModal();
   },
   'delete-entry'(el) {
     openModal(`<h2>Obrisati unos?</h2><p class="muted">Ova radnja se ne može poništiti.</p>

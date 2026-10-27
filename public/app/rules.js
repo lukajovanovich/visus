@@ -69,6 +69,10 @@ export const URGENCY = [
   { key: 'doctor', icon: '🔴', name: 'Potreban oftalmolog', desc: 'Mislim da treba da me pregleda lekar' },
 ];
 
+// Kontakt koji se nudi kada korisnik označi "Potreban oftalmolog".
+export const CLINIC = { name: 'Vizim Dom Zdravlja', phone: '011 785 7777', tel: '+381117857777' };
+export const EMERGENCY_PHONE = '194';
+
 // Profil korisnika (sva polja opciona). Čuva se u profiles.demographics.
 export const DEMOGRAPHIC_OPTIONS = {
   ageRange: ['18–29', '30–44', '45–59', '60–74', '75+'],

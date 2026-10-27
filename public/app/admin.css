@@ -18,7 +18,7 @@
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
 .admin-login { max-width: 400px; margin: 12vh auto; padding: 0 20px; }
 .admin-login .brand { padding: 0 0 24px; }
-.privacy-note { display: flex; gap: 10px; align-items: flex-start; }
+.admin-tabs { margin-bottom: 24px; }
 
 @media (max-width: 860px) {
   .admin-bar, .admin-main { padding-left: 16px; padding-right: 16px; }

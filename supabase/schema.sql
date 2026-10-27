@@ -385,7 +385,83 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- Admin (istraživački tim): vidi samo anonimne istraživačke zapise i ukupne brojeve.
+-- Izveštaj za lekara: pacijent SAM, na svaki klik, šalje svoje unose iz poslednjih
+-- 7 dana timu Vizim Doma Zdravlja (adminima). Svaki red je jednokratna, izričita
+-- saglasnost; pacijent ga može povući (obrisati). Briše se i sa nalogom.
+-- -----------------------------------------------------------------------------
+create table if not exists public.shared_reports (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  period_from date not null,
+  period_to   date not null,
+  data        jsonb not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists shared_reports_user_idx on public.shared_reports (user_id);
+create index if not exists shared_reports_created_idx on public.shared_reports (created_at desc);
+
+-- Sadržaj izveštaja (isti za "Preuzmi PDF" i "Pošalji lekaru").
+create or replace function private.report_data(p_user uuid, p_days integer)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  with t as (select private.user_today(p_user) as today)
+  select jsonb_build_object(
+    'generated_at', now(),
+    'period_from', (select today - (p_days - 1) from t),
+    'period_to', (select today from t),
+    'patient', jsonb_build_object('name', p.name, 'email', u.email),
+    'profile', p.demographics,
+    'entries', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'date', e.date, 'period', e.period,
+               'dryness', e.dryness, 'clarity', e.clarity, 'fatigue', e.fatigue, 'redness', e.redness, 'light', e.light,
+               'symptoms', e.symptoms, 'symptom_other', e.symptom_other, 'urgency', e.urgency,
+               'note', e.note, 'retroactive', e.retroactive)
+             order by e.date, case e.period when 'morning' then 1 when 'working' then 2 else 3 end)
+      from public.entries e, t
+      where e.user_id = p_user and e.date between t.today - (p_days - 1) and t.today), '[]'::jsonb)
+  )
+  from public.profiles p join auth.users u on u.id = p.id
+  where p.id = p_user
+$$;
+
+-- Pregled / preuzimanje sopstvenog izveštaja (ništa se ne šalje).
+create or replace function public.preview_report()
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Niste prijavljeni' using errcode = 'insufficient_privilege';
+  end if;
+  return private.report_data(auth.uid(), 7);
+end;
+$$;
+
+-- Slanje izveštaja lekaru.
+create or replace function public.send_report()
+returns public.shared_reports language plpgsql security definer set search_path = '' as $$
+declare
+  v_data jsonb;
+  v_row public.shared_reports;
+begin
+  if auth.uid() is null then
+    raise exception 'Niste prijavljeni' using errcode = 'insufficient_privilege';
+  end if;
+  if (select count(*) from public.shared_reports where user_id = auth.uid() and created_at > now() - interval '1 hour') >= 5 then
+    raise exception 'Poslali ste više izveštaja u kratkom roku. Pokušajte ponovo za sat vremena.' using errcode = 'check_violation';
+  end if;
+  v_data := private.report_data(auth.uid(), 7);
+  if jsonb_array_length(v_data -> 'entries') = 0 then
+    raise exception 'Nema unosa u poslednjih 7 dana' using errcode = 'check_violation';
+  end if;
+  insert into public.shared_reports (user_id, period_from, period_to, data)
+  values (auth.uid(), (v_data ->> 'period_from')::date, (v_data ->> 'period_to')::date, v_data)
+  returning * into v_row;
+  return v_row;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Admin (tim Vizim Doma Zdravlja): vidi anonimne istraživačke zapise, ukupne brojeve
+-- i izveštaje koje su mu pacijenti SAMI poslali. Ostale lične podatke ne vidi.
 -- Admin se dodaje isključivo ovde, u SQL Editoru (aplikacija to ne može):
 --   insert into private.admins (user_id)
 --   select id from auth.users where email = 'ADMIN-EMAIL';
@@ -444,6 +520,21 @@ begin
 end;
 $$;
 
+-- Izveštaji koje su pacijenti poslali (najnoviji prvi).
+create or replace function public.admin_reports()
+returns table (id uuid, created_at timestamptz, period_from date, period_to date, data jsonb)
+language plpgsql stable security definer set search_path = '' as $$
+#variable_conflict use_column
+begin
+  perform private.require_admin();
+  return query
+    select r.id, r.created_at, r.period_from, r.period_to, r.data
+    from public.shared_reports r
+    order by r.created_at desc
+    limit 500;
+end;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Prava pristupa i Row Level Security
 -- -----------------------------------------------------------------------------
@@ -452,12 +543,15 @@ revoke all on function public.claim_reward(text), public.research_preview(), pub
 grant execute on function public.claim_reward(text), public.research_preview(), public.delete_account() to authenticated;
 revoke all on function public.is_admin(), public.admin_overview(), public.admin_research(timestamptz, timestamptz) from public, anon;
 grant execute on function public.is_admin(), public.admin_overview(), public.admin_research(timestamptz, timestamptz) to authenticated;
+revoke all on function public.preview_report(), public.send_report(), public.admin_reports() from public, anon;
+grant execute on function public.preview_report(), public.send_report(), public.admin_reports() to authenticated;
 
-revoke all on public.profiles, public.entries, public.consent_events, public.redemptions, public.waitlist from anon, authenticated;
+revoke all on public.profiles, public.entries, public.consent_events, public.redemptions, public.waitlist, public.shared_reports from anon, authenticated;
 grant select, update on public.profiles to authenticated;
 grant select, insert, update, delete on public.entries to authenticated;
 grant select on public.consent_events, public.redemptions to authenticated;
 grant insert on public.waitlist to anon, authenticated;
+grant select, delete on public.shared_reports to authenticated;
 
 -- Interne tabele: nisu dostupne preko API-ja, RLS je dodatni sloj zaštite.
 -- Funkcije koje ih koriste rade kao vlasnik tabele, pa RLS na njih ne utiče.
@@ -470,6 +564,7 @@ alter table public.entries        enable row level security;
 alter table public.consent_events enable row level security;
 alter table public.redemptions    enable row level security;
 alter table public.waitlist       enable row level security;
+alter table public.shared_reports enable row level security;
 
 drop policy if exists "profil: čitanje svog" on public.profiles;
 create policy "profil: čitanje svog" on public.profiles for select to authenticated using (id = auth.uid());
@@ -487,3 +582,8 @@ create policy "nagrade: čitanje svojih" on public.redemptions for select to aut
 
 drop policy if exists "lista čekanja: upis" on public.waitlist;
 create policy "lista čekanja: upis" on public.waitlist for insert to anon, authenticated with check (consent);
+
+drop policy if exists "izveštaji: svoji" on public.shared_reports;
+create policy "izveštaji: svoji" on public.shared_reports for select to authenticated using (user_id = auth.uid());
+drop policy if exists "izveštaji: povlačenje svojih" on public.shared_reports;
+create policy "izveštaji: povlačenje svojih" on public.shared_reports for delete to authenticated using (user_id = auth.uid());
