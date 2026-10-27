@@ -6,7 +6,7 @@
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_LOGIN } from '../config.js';
-import { METRICS, PERIODS, SYMPTOMS, URGENCY, dayKey, addDays, severity } from './rules.js';
+import { METRICS, PERIODS, SYMPTOMS, URGENCY, EYES, dayKey, addDays, severity } from './rules.js';
 import { lineChart } from './chart.js';
 import { downloadReportPdf } from './report.js';
 
@@ -86,6 +86,9 @@ async function loadData() {
     date: dayKey(new Date(r.timestamp)),
     period: r.period,
     scores: Object.fromEntries(METRICS.map((m) => [m.key, r[m.key]])),
+    // Ocene po oku (null za zapise pre nego što je to uvedeno).
+    eyes: r.dryness_r == null ? null
+      : Object.fromEntries(EYES.map((x) => [x.key, Object.fromEntries(METRICS.map((m) => [m.key, r[`${m.key}_${x.key}`]]))])),
     symptoms: r.symptoms || [],
     urgency: r.urgency || null,
   }));
@@ -369,7 +372,10 @@ function renderLatest(recs) {
         <thead><tr><th>Vreme</th><th>Doba</th>${METRICS.map((m) => `<th title="${m.name}">${m.emoji}</th>`).join('')}<th>Stanje</th></tr></thead>
         <tbody>${latest.map((r) => `<tr>
           <td>${fmtDateTime(r.timestamp)}</td><td>${periodOf(r.period)?.emoji || ''}</td>
-          ${METRICS.map((m) => `<td><span class="pill-score" style="background:${sevColor(severity(m, r.scores[m.key]))}">${r.scores[m.key]}</span></td>`).join('')}
+          ${METRICS.map((m) => {
+            const split = r.eyes && r.eyes.r[m.key] !== r.eyes.l[m.key];
+            return `<td><span class="pill-score${split ? ' wide' : ''}" ${split ? `title="desno ${r.eyes.r[m.key]}, levo ${r.eyes.l[m.key]}"` : ''} style="background:${sevColor(severity(m, r.scores[m.key]))}">${split ? `${r.eyes.r[m.key]}/${r.eyes.l[m.key]}` : r.scores[m.key]}</span></td>`;
+          }).join('')}
           <td title="${URGENCY.find((u) => u.key === r.urgency)?.name || ''}">${URGENCY.find((u) => u.key === r.urgency)?.icon || '–'}</td>
         </tr>`).join('')}</tbody>
       </table></div>
@@ -380,9 +386,12 @@ function renderLatest(recs) {
 
 function exportCsv() {
   // Simptomi: jedna kolona 0/1 po simptomu, da bi se lako analizirali u Excel-u / Power BI-ju.
-  const cols = ['pseudonym', 'timestamp', 'period', ...METRICS.map((m) => m.key), 'urgency', ...SYMPTOMS.map((x) => `symptom_${x.key}`)];
+  // Ocene: ukupno (oko sa više tegoba) + po oku (<metrika>_r / _l; prazno za starije zapise).
+  const cols = ['pseudonym', 'timestamp', 'period', ...METRICS.map((m) => m.key),
+    ...METRICS.flatMap((m) => EYES.map((x) => `${m.key}_${x.key}`)), 'urgency', ...SYMPTOMS.map((x) => `symptom_${x.key}`)];
   const lines = [cols.join(',')].concat(ui.records.map((r) => [
-    r.pseudonym, r.timestamp, r.period, ...METRICS.map((m) => r.scores[m.key]), r.urgency ?? '',
+    r.pseudonym, r.timestamp, r.period, ...METRICS.map((m) => r.scores[m.key]),
+    ...METRICS.flatMap((m) => EYES.map((x) => r.eyes?.[x.key][m.key] ?? '')), r.urgency ?? '',
     ...SYMPTOMS.map((x) => (r.symptoms.includes(x.key) ? 1 : 0)),
   ].join(',')));
   // BOM da bi Excel ispravno prepoznao UTF-8

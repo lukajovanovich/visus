@@ -113,6 +113,17 @@ export function severity(metric, v) {
   return metric.invert ? 6 - v : v;
 }
 
+// Ocene po oku: kolone <metrika>_r (desno) i <metrika>_l (levo). Desno se navodi prvo, kao u oftalmologiji.
+export const EYES = [
+  { key: 'r', name: 'Desno oko', short: 'D' },
+  { key: 'l', name: 'Levo oko', short: 'L' },
+];
+
+// Ukupna ocena = oko sa više tegoba. Isto pravilo kao private.apply_eye_scores() u schema.sql.
+export function worseEye(metric, r, l) {
+  return severity(metric, r) >= severity(metric, l) ? r : l;
+}
+
 /* ---------- Gamification ---------- */
 
 export function computeStats(entries, today, researchOptIn = false) {

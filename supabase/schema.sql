@@ -40,6 +40,12 @@ create index if not exists records_pseudonym_idx on research.records (pseudonym)
 -- v1.1: prisutni simptomi i stanje hitnosti
 alter table research.records add column if not exists symptoms text[] not null default '{}';
 alter table research.records add column if not exists urgency  text;
+-- Ocene po oku (desno = _r, levo = _l). Prazno za zapise pre ove izmene.
+alter table research.records add column if not exists dryness_r smallint, add column if not exists dryness_l smallint,
+  add column if not exists clarity_r smallint, add column if not exists clarity_l smallint,
+  add column if not exists fatigue_r smallint, add column if not exists fatigue_l smallint,
+  add column if not exists redness_r smallint, add column if not exists redness_l smallint,
+  add column if not exists light_r   smallint, add column if not exists light_l   smallint;
 
 -- Trenutna verzija politike privatnosti. Kada se promeni, korisnici ponovo daju saglasnost.
 -- Mora da se poklapa sa CONSENT_VERSION u public/app/rules.js.
@@ -91,6 +97,20 @@ alter table public.entries add constraint entries_symptoms_check check (
   symptoms <@ array['tearing', 'discharge', 'red_eye', 'foreign_body', 'burning', 'itching', 'pain', 'pressure', 'reduced_acuity', 'other']::text[]);
 alter table public.entries drop constraint if exists entries_urgency_check;
 alter table public.entries add constraint entries_urgency_check check (urgency in ('usual', 'sudden', 'doctor'));
+
+-- Ocene po oku (desno = _r, levo = _l). Kolone bez sufiksa (dryness, clarity…) su tada ocena
+-- oka sa više tegoba – računa ih trigger, pa grafikoni, istraživanje i izveštaji i dalje rade.
+-- Stari unosi (pre ove izmene) imaju prazne kolone po oku.
+alter table public.entries add column if not exists dryness_r smallint check (dryness_r between 1 and 5),
+  add column if not exists dryness_l smallint check (dryness_l between 1 and 5),
+  add column if not exists clarity_r smallint check (clarity_r between 1 and 5),
+  add column if not exists clarity_l smallint check (clarity_l between 1 and 5),
+  add column if not exists fatigue_r smallint check (fatigue_r between 1 and 5),
+  add column if not exists fatigue_l smallint check (fatigue_l between 1 and 5),
+  add column if not exists redness_r smallint check (redness_r between 1 and 5),
+  add column if not exists redness_l smallint check (redness_l between 1 and 5),
+  add column if not exists light_r   smallint check (light_r between 1 and 5),
+  add column if not exists light_l   smallint check (light_l between 1 and 5);
 
 create table if not exists public.consent_events (
   id         bigint generated always as identity primary key,
@@ -155,6 +175,29 @@ begin
   end loop;
 
   return v_count * 15 + (case when v_streak >= 3 then v_streak else 0 end) * 5;
+end;
+$$;
+
+-- Ocene po oku: ili sve popunjene ili nijedna. Ukupna ocena = oko sa više tegoba
+-- (kod jasnoće vida niža ocena je lošija). Isto pravilo kao worseEye() u rules.js.
+create or replace function private.apply_eye_scores(e public.entries)
+returns public.entries language plpgsql immutable set search_path = '' as $$
+declare
+  v_set integer := num_nonnulls(e.dryness_r, e.dryness_l, e.clarity_r, e.clarity_l, e.fatigue_r, e.fatigue_l,
+                                e.redness_r, e.redness_l, e.light_r, e.light_l);
+begin
+  if v_set = 0 then
+    return e;
+  end if;
+  if v_set < 10 then
+    raise exception 'Ocene po oku moraju biti popunjene za oba oka' using errcode = 'check_violation';
+  end if;
+  e.dryness := greatest(e.dryness_r, e.dryness_l);
+  e.clarity := least(e.clarity_r, e.clarity_l);
+  e.fatigue := greatest(e.fatigue_r, e.fatigue_l);
+  e.redness := greatest(e.redness_r, e.redness_l);
+  e.light   := greatest(e.light_r, e.light_l);
+  return e;
 end;
 $$;
 
@@ -247,6 +290,7 @@ begin
   new.symptoms := array(select distinct unnest(coalesce(new.symptoms, '{}')) order by 1);
   new.symptom_other := case when 'other' = any(new.symptoms) then nullif(btrim(new.symptom_other), '') end;
   new.note := btrim(coalesce(new.note, ''));
+  new := private.apply_eye_scores(new);
   new.retroactive := new.date <> v_today;
   new.created_at := now();
   new.updated_at := now();
@@ -257,7 +301,7 @@ drop trigger if exists entries_before_insert on public.entries;
 create trigger entries_before_insert before insert on public.entries
   for each row execute function private.entries_before_insert();
 
--- Izmena: menjaju se samo ocene i beleška.
+-- Izmena: menjaju se samo ocene, simptomi, stanje i beleška.
 create or replace function private.entries_before_update()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
@@ -270,6 +314,7 @@ begin
   new.symptoms := array(select distinct unnest(coalesce(new.symptoms, '{}')) order by 1);
   new.symptom_other := case when 'other' = any(new.symptoms) then nullif(btrim(new.symptom_other), '') end;
   new.note := btrim(coalesce(new.note, ''));
+  new := private.apply_eye_scores(new);
   new.updated_at := now();
   return new;
 end;
@@ -283,9 +328,12 @@ create or replace function private.entries_after_insert()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   if (select research_opt_in from public.profiles where id = new.user_id) then
-    insert into research.records (pseudonym, timestamp, period, dryness, clarity, fatigue, redness, light, symptoms, urgency)
+    insert into research.records (pseudonym, timestamp, period, dryness, clarity, fatigue, redness, light, symptoms, urgency,
+                                  dryness_r, dryness_l, clarity_r, clarity_l, fatigue_r, fatigue_l, redness_r, redness_l, light_r, light_l)
     values (private.pseudonym(new.user_id), new.created_at, new.period, new.dryness, new.clarity, new.fatigue, new.redness, new.light,
-            new.symptoms, new.urgency);
+            new.symptoms, new.urgency,
+            new.dryness_r, new.dryness_l, new.clarity_r, new.clarity_l, new.fatigue_r, new.fatigue_l,
+            new.redness_r, new.redness_l, new.light_r, new.light_l);
   end if;
   return new;
 end;
@@ -365,6 +413,11 @@ begin
       'period', v_last.period,
       'scores', jsonb_build_object('dryness', v_last.dryness, 'clarity', v_last.clarity, 'fatigue', v_last.fatigue,
                                    'redness', v_last.redness, 'light', v_last.light),
+      'eyes', case when v_last.dryness_r is null then null else jsonb_build_object(
+        'right', jsonb_build_object('dryness', v_last.dryness_r, 'clarity', v_last.clarity_r, 'fatigue', v_last.fatigue_r,
+                                    'redness', v_last.redness_r, 'light', v_last.light_r),
+        'left',  jsonb_build_object('dryness', v_last.dryness_l, 'clarity', v_last.clarity_l, 'fatigue', v_last.fatigue_l,
+                                    'redness', v_last.redness_l, 'light', v_last.light_l)) end,
       'symptoms', to_jsonb(v_last.symptoms),
       'urgency', v_last.urgency,
       'eyeCrop', null) end
@@ -414,6 +467,8 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       select jsonb_agg(jsonb_build_object(
                'date', e.date, 'period', e.period,
                'dryness', e.dryness, 'clarity', e.clarity, 'fatigue', e.fatigue, 'redness', e.redness, 'light', e.light,
+               'dryness_r', e.dryness_r, 'clarity_r', e.clarity_r, 'fatigue_r', e.fatigue_r, 'redness_r', e.redness_r, 'light_r', e.light_r,
+               'dryness_l', e.dryness_l, 'clarity_l', e.clarity_l, 'fatigue_l', e.fatigue_l, 'redness_l', e.redness_l, 'light_l', e.light_l,
                'symptoms', e.symptoms, 'symptom_other', e.symptom_other, 'urgency', e.urgency,
                'note', e.note, 'retroactive', e.retroactive)
              order by e.date, case e.period when 'morning' then 1 when 'working' then 2 else 3 end)
@@ -506,13 +561,16 @@ drop function if exists public.admin_research(timestamptz, timestamptz);
 create function public.admin_research(p_from timestamptz default null, p_to timestamptz default null)
 returns table (pseudonym text, "timestamp" timestamptz, period text,
                dryness smallint, clarity smallint, fatigue smallint, redness smallint, light smallint,
-               symptoms text[], urgency text)
+               symptoms text[], urgency text,
+               dryness_r smallint, dryness_l smallint, clarity_r smallint, clarity_l smallint, fatigue_r smallint, fatigue_l smallint,
+               redness_r smallint, redness_l smallint, light_r smallint, light_l smallint)
 language plpgsql stable security definer set search_path = '' as $$
 #variable_conflict use_column
 begin
   perform private.require_admin();
   return query
-    select r.pseudonym, r.timestamp, r.period, r.dryness, r.clarity, r.fatigue, r.redness, r.light, r.symptoms, r.urgency
+    select r.pseudonym, r.timestamp, r.period, r.dryness, r.clarity, r.fatigue, r.redness, r.light, r.symptoms, r.urgency,
+           r.dryness_r, r.dryness_l, r.clarity_r, r.clarity_l, r.fatigue_r, r.fatigue_l, r.redness_r, r.redness_l, r.light_r, r.light_l
     from research.records r
     where (p_from is null or r.timestamp >= p_from)
       and (p_to is null or r.timestamp < p_to)

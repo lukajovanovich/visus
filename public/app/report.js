@@ -59,6 +59,10 @@ function addDays(key, n) {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// Ocena jednog oka ('r' / 'l'); stari unosi bez ocena po oku važe za oba oka.
+const eyeVal = (e, key, eye) => e[`${key}_${eye}`] ?? e[key];
+const eyesDiffer = (e, key) => e[`${key}_r`] != null && e[`${key}_r`] !== e[`${key}_l`];
+
 function symptomText(e) {
   return (e.symptoms || []).map((k) => (k === 'other' ? `drugo${e.symptom_other ? ': ' + e.symptom_other : ''}`
     : (SYMPTOMS.find((x) => x.key === k)?.name || k).toLowerCase())).join(', ');
@@ -95,6 +99,11 @@ const sectionTitle = (text) => ({ text, style: 'h2', margin: [0, 16, 0, 6] });
 function scoreCell(m, v) {
   const sev = severity(m, v);
   return { text: String(v), alignment: 'center', bold: true, color: sev === 2 || sev === 3 ? '#1f2a24' : '#ffffff', fillColor: SEV[sev] };
+}
+
+// Ćelija unosa: boja po oku sa više tegoba, tekst "D/L" kada se oči razlikuju.
+function entryScoreCell(m, e) {
+  return { ...scoreCell(m, e[m.key]), text: eyesDiffer(e, m.key) ? `${e[`${m.key}_r`]}/${e[`${m.key}_l`]}` : String(e[m.key]) };
 }
 
 /* ---------- Sastavljanje dokumenta ---------- */
@@ -161,18 +170,19 @@ export function buildReportDoc(data) {
       sectionTitle('Prosečne ocene (1–5)'),
       {
         table: {
-          widths: ['*', 60, 60, 60],
+          widths: ['*', 58, 58, 58, 58],
           headerRows: 1,
           body: [
-            [{ text: 'Simptom', style: 'th' }, { text: 'Prosek', style: 'th', alignment: 'center' }, { text: 'Najbolje', style: 'th', alignment: 'center' }, { text: 'Najgore', style: 'th', alignment: 'center' }],
+            [{ text: 'Simptom', style: 'th' }, ...['Prosek – desno', 'Prosek – levo', 'Najbolje', 'Najgore'].map((t) => ({ text: t, style: 'th', alignment: 'center' }))],
             ...METRICS.map((m) => {
-              const vals = entries.map((e) => e[m.key]);
-              const a = avg(vals);
+              const vals = entries.flatMap((e) => [eyeVal(e, m.key, 'r'), eyeVal(e, m.key, 'l')]);
+              const eyeAvg = (eye) => { const a = avg(entries.map((e) => eyeVal(e, m.key, eye))); return { ...scoreCell(m, Math.round(a)), text: fmtNum(a) }; };
               const best = m.invert ? Math.max(...vals) : Math.min(...vals);
               const worst = m.invert ? Math.min(...vals) : Math.max(...vals);
               return [
                 m.name + (m.invert ? '  (5 = potpuno jasno)' : ''),
-                { ...scoreCell(m, Math.round(a)), text: fmtNum(a) },
+                eyeAvg('r'),
+                eyeAvg('l'),
                 scoreCell(m, best),
                 scoreCell(m, worst),
               ];
@@ -181,7 +191,7 @@ export function buildReportDoc(data) {
         },
         layout: { hLineColor: BORDER, vLineColor: BORDER },
       },
-      sectionTitle('Kretanje po danima (prosek dana)'),
+      sectionTitle('Kretanje po danima (prosek dana, oko sa više tegoba)'),
       { svg: chartSvg(entries, days), width: 515 },
       {
         columns: METRICS.map((m) => ({
@@ -202,7 +212,7 @@ export function buildReportDoc(data) {
       {
         table: {
           headerRows: 1,
-          widths: [52, 44, 20, 20, 20, 20, 20, 62, '*'],
+          widths: [52, 44, 22, 22, 22, 22, 22, 62, '*'],
           body: [
             ['Datum', 'Doba dana', 'Suv.', 'Jas.', 'Zam.', 'Crv.', 'Svet.', 'Stanje', 'Simptomi i beleška'].map((t) => ({ text: t, style: 'th' })),
             ...entries.map((e) => {
@@ -211,7 +221,7 @@ export function buildReportDoc(data) {
               return [
                 { text: [`${dow(e.date)} ${fmtDayShort(e.date)}`, e.retroactive ? { text: '\nnaknadno', fontSize: 7, color: MUTED } : ''] },
                 PERIODS.find((p) => p.key === e.period)?.name || e.period,
-                ...METRICS.map((m) => scoreCell(m, e[m.key])),
+                ...METRICS.map((m) => entryScoreCell(m, e)),
                 u ? { text: u.name, color: URGENCY_COLOR[u.key], bold: u.key !== 'usual' } : { text: '–', color: MUTED },
                 details.length ? details.join('\n') : { text: '–', color: MUTED },
               ];
@@ -221,6 +231,9 @@ export function buildReportDoc(data) {
         layout: { hLineColor: BORDER, vLineColor: BORDER, paddingTop: () => 3, paddingBottom: () => 3 },
         fontSize: 8,
       },
+      ...(entries.some((e) => METRICS.some((m) => eyesDiffer(e, m.key)))
+        ? [{ text: 'Ocena „2/3“ = desno oko / levo oko, kada se razlikuju. Boja ćelije prati oko sa više tegoba.', fontSize: 7.5, color: MUTED, margin: [0, 4, 0, 0] }]
+        : []),
     );
   }
 

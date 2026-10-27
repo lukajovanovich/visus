@@ -11,6 +11,8 @@ A patient-facing mobile app for logging daily eye condition symptoms. Primary pu
 ## The 5 Symptom Metrics
 All metrics are **subjective only** — no clinical measurements (patients cannot measure IOP or Snellen acuity themselves).
 
+**Per eye:** each metric is scored for both eyes at once by default; the user can click "Različito po oku" to score the right (`_r`) and left (`_l`) eye separately. Stored in `entries.<metric>_r` / `<metric>_l`; the plain `<metric>` column is then the worse eye (computed by `private.apply_eye_scores`, same rule as `worseEye` in rules.js; clarity: lower = worse). Old entries have empty per-eye columns (= same for both eyes). Added without a consent bump (same 5 metrics, finer detail; privacy text updated).
+
 | # | Metric | Scale |
 |---|---|---|
 | 1 | Dryness | 1–5 |
@@ -33,7 +35,7 @@ All metrics are **subjective only** — no clinical measurements (patients canno
 - Collected from all users who **opt in** during onboarding
 - Contains **no PII whatsoever**: no name, no email, no device ID
 - User identity replaced by a one-way hash (pseudonym) — cannot be reversed to identify the individual
-- Contains only: pseudonym, timestamp, period (morning/working/evening), 5 metric scores, symptom checklist, urgency, optional eye image crop (symptoms + urgency added in consent v1.1)
+- Contains only: pseudonym, timestamp, period (morning/working/evening), 5 metric scores (overall + per eye), symptom checklist, urgency, optional eye image crop (symptoms + urgency added in consent v1.1)
 - Purpose: scientific research only
 - Accessible to: research team only (admin panel)
 - Retention: indefinite (research archive)

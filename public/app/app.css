@@ -238,7 +238,7 @@ textarea { min-height: 110px; resize: vertical; }
 
 /* ---------- Log entry ---------- */
 .metric-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: center; padding: 18px 0; border-top: 1px solid var(--border); }
-.metric-row:first-child { border-top: 0; padding-top: 0; }
+.metric-row:first-of-type { border-top: 0; padding-top: 0; }
 .metric-row:last-child { padding-bottom: 0; }
 .metric-name { display: flex; align-items: center; gap: 10px; }
 .metric-name .emoji { font-size: 1.4rem; }
@@ -248,6 +248,15 @@ textarea { min-height: 110px; resize: vertical; }
 .scale button:hover { border-color: var(--accent); }
 .scale button.on { color: #fff; border-color: transparent; }
 .scale-ends { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
+.eye-hint { margin: 0 0 14px; }
+.eye-toggle { border: 0; background: none; padding: 0; margin-top: 6px; font: inherit; font-size: 0.78rem; font-weight: 600; color: var(--accent); cursor: pointer; }
+.eye-toggle:hover { text-decoration: underline; }
+.eye-scale { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: center; }
+.eye-scale + .eye-scale { margin-top: 8px; }
+.eye-label { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+.scale-ends.eye-indent { margin-left: 88px; }
+.pill-score.wide { width: auto; padding: 0 7px; }
+@media (max-width: 420px) { .eye-scale { grid-template-columns: 52px minmax(0, 1fr); gap: 6px; } .scale-ends.eye-indent { margin-left: 58px; } }
 @media (max-width: 700px) { .metric-row { grid-template-columns: 1fr; gap: 10px; } }
 .side-panel { position: sticky; top: 24px; }
 .retro-note { background: color-mix(in srgb, var(--warn) 14%, transparent); border-radius: 10px; padding: 10px 12px; font-size: 0.85rem; margin-bottom: 16px; }

@@ -10,7 +10,7 @@ import {
   CONSENT_VERSION, STREAK_MIN, XP_PER_ENTRY, XP_PER_STREAK_DAY, NOTE_MAX,
   METRICS, PERIODS, BADGES, DEMOGRAPHIC_OPTIONS, DEMOGRAPHIC_MULTI, DIOPTER_KEYS,
   SYMPTOMS, URGENCY, SYMPTOM_OTHER_MAX, CLINIC, EMERGENCY_PHONE,
-  dayKey, parseKey, addDays, severity, computeStats,
+  dayKey, parseKey, addDays, severity, computeStats, EYES, worseEye,
 } from './rules.js';
 import { lineChart } from './chart.js';
 import { downloadReportPdf } from './report.js';
@@ -38,6 +38,7 @@ const ui = {
   selDate: null,
   range: 30,
   trendMetrics: new Set(METRICS.map((m) => m.key)),
+  trendEye: 'all', // 'all' (oko sa više tegoba) | 'r' | 'l'
   demoEdit: null,
   returnTo: null,
   afterNav: null,
@@ -75,6 +76,9 @@ function entryFromRow(r) {
     date: r.date,
     period: r.period,
     scores: Object.fromEntries(METRICS.map((m) => [m.key, r[m.key]])),
+    // Ocene po oku; null za unose pre nego što je to uvedeno (tada ocena važi za oba oka).
+    eyes: r.dryness_r == null ? null
+      : Object.fromEntries(EYES.map((x) => [x.key, Object.fromEntries(METRICS.map((m) => [m.key, r[`${m.key}_${x.key}`]]))])),
     symptoms: r.symptoms || [],
     symptomOther: r.symptom_other || '',
     urgency: r.urgency || null,
@@ -187,6 +191,15 @@ const symptomName = (key) => SYMPTOMS.find((x) => x.key === key)?.name || key;
 // Naziv simptoma za prikaz; "Drugo" dobija opis koji je korisnik upisao.
 const symptomLabel = (e, key) => (key === 'other' && e.symptomOther ? `Drugo: ${e.symptomOther}` : symptomName(key));
 const stats = () => computeStats(view().entries, todayKey(), view().research.optIn);
+// Ocena jednog oka (stari unosi bez ocena po oku važe za oba oka).
+const eyeScore = (e, eye, key) => (e.eyes ? e.eyes[eye][key] : e.scores[key]);
+const eyesDiffer = (e, key) => !!e.eyes && e.eyes.r[key] !== e.eyes.l[key];
+// Za prikaz: "2", ili "2/3" (desno/levo) kada se oči razlikuju.
+const scoreLabel = (e, m) => (eyesDiffer(e, m.key) ? `${e.eyes.r[m.key]}/${e.eyes.l[m.key]}` : String(e.scores[m.key]));
+const scoreTitle = (e, m) => (eyesDiffer(e, m.key) ? `${m.name}: desno ${e.eyes.r[m.key]}, levo ${e.eyes.l[m.key]}` : m.name);
+function scorePill(e, m) {
+  return `<span class="pill-score${eyesDiffer(e, m.key) ? ' wide' : ''}" title="${scoreTitle(e, m)}" style="background:${sevColor(severity(m, e.scores[m.key]))}">${scoreLabel(e, m)}</span>`;
+}
 
 function toast(msg) {
   const t = $('#toast');
@@ -713,11 +726,12 @@ function entriesTable(list, { note = true } = {}) {
       <tr class="clickable" data-action="open-log" data-date="${e.date}" data-period="${e.period}">
         <td>${relDay(e.date)}${e.retroactive ? ' <span class="tag warn">naknadno</span>' : ''}</td>
         <td>${periodOf(e.period).emoji} ${periodOf(e.period).name}</td>
-        ${METRICS.map((m) => `<td><span class="pill-score" style="background:${sevColor(severity(m, e.scores[m.key]))}">${e.scores[m.key]}</span></td>`).join('')}
+        ${METRICS.map((m) => `<td>${scorePill(e, m)}</td>`).join('')}
         <td title="${urgencyOf(e.urgency)?.name || ''}">${urgencyOf(e.urgency)?.icon || '–'}</td>
         <td class="note-cell">${e.symptoms.length ? esc(e.symptoms.map((k) => symptomLabel(e, k)).join(', ')) : '–'}</td>
         ${note ? `<td class="note-cell">${esc(e.note) || '–'}</td>` : ''}
-      </tr>`).join('')}</tbody></table></div>`;
+      </tr>`).join('')}</tbody></table></div>
+    ${list.some((e) => METRICS.some((m) => eyesDiffer(e, m.key))) ? '<p class="small muted" style="margin:8px 0 0">2/3 = desno oko / levo oko, kada se ocene razlikuju.</p>' : ''}`;
 }
 
 /* ---------- Unos ---------- */
@@ -749,7 +763,7 @@ function getPending() {
 function guestSave() {
   const d = ui.draft;
   if (!isDraftComplete(d)) return;
-  setPending({ date: d.date, period: d.period, scores: { ...d.scores }, symptoms: [...d.symptoms], symptomOther: d.symptomOther, urgency: d.urgency, note: d.note, savedAt: Date.now() });
+  setPending({ date: d.date, period: d.period, r: { ...d.r }, l: { ...d.l }, symptoms: [...d.symptoms], symptomOther: d.symptomOther, urgency: d.urgency, note: d.note, savedAt: Date.now() });
   ui.draft = null;
   ui.authTab = 'signup';
   ui.authMsg = { ok: true, text: 'Unos je spreman. Napravite besplatan nalog ili se prijavite da ga sačuvate.' };
@@ -766,30 +780,41 @@ async function resumePending() {
   // Već postoji unos za taj termin, ili je unos sačuvan pre nego što je stanje hitnosti postalo obavezno:
   // otvori formu da korisnik proveri i sačuva.
   if (existing || !p.urgency) {
-    ui.draft = { date: p.date, period: p.period, id: existing?.id || null, scores: p.scores, symptoms: p.symptoms || [], symptomOther: p.symptomOther || '', urgency: p.urgency || null, note: p.note };
+    ui.draft = { date: p.date, period: p.period, id: existing?.id || null, ...pendingEyes(p), symptoms: p.symptoms || [], symptomOther: p.symptomOther || '', urgency: p.urgency || null, note: p.note };
     ui.returnTo = '/home';
     go(`/log?date=${p.date}&period=${p.period}`);
     toast(existing ? 'Za ovaj termin već imate unos. Proverite nove ocene i sačuvajte.' : 'Proverite unos i sačuvajte ga.');
     return true;
   }
-  const row = check(await sb.from('entries').insert({ ...p.scores, symptoms: p.symptoms || [], symptom_other: p.symptomOther || null, urgency: p.urgency, note: p.note, date: p.date, period: p.period }).select().single());
+  const { r, l } = pendingEyes(p);
+  const row = check(await sb.from('entries').insert({ ...eyeFields(r, l), symptoms: p.symptoms || [], symptom_other: p.symptomOther || null, urgency: p.urgency, note: p.note, date: p.date, period: p.period }).select().single());
   state.entries.push(entryFromRow(row));
   go('/home');
   toast(`Vaš unos je sačuvan · +${XP_PER_ENTRY} XP`);
   return true;
 }
 
+// Ocene u formi: d.r / d.l (desno / levo oko); d.split = simptomi koji se ocenjuju posebno po oku.
+function eyeDraft(r = {}, l = {}) {
+  return { r: { ...r }, l: { ...l }, split: METRICS.filter((m) => r[m.key] !== l[m.key]).map((m) => m.key) };
+}
+// Unos gosta sačuvan pre uvođenja ocena po oku ima samo "scores" (važi za oba oka).
+const pendingEyes = (p) => (p.r ? eyeDraft(p.r, p.l) : eyeDraft(p.scores, p.scores));
+const eyeFields = (r, l) => Object.fromEntries(METRICS.flatMap((m) => [[`${m.key}_r`, r[m.key]], [`${m.key}_l`, l[m.key]]]));
+
 function loadDraft(date, period) {
   const existing = findEntry(date, period);
   const pending = !state && getPending();
   if (pending && pending.date === date && pending.period === period) {
-    ui.draft = { date, period, id: null, scores: { ...pending.scores }, symptoms: [...(pending.symptoms || [])], symptomOther: pending.symptomOther || '', urgency: pending.urgency || null, note: pending.note };
+    ui.draft = { date, period, id: null, ...pendingEyes(pending), symptoms: [...(pending.symptoms || [])], symptomOther: pending.symptomOther || '', urgency: pending.urgency || null, note: pending.note };
     return;
   }
   ui.draft = {
     date, period,
     id: existing?.id || null,
-    scores: existing ? { ...existing.scores } : {},
+    ...(existing
+      ? eyeDraft(...EYES.map((x) => Object.fromEntries(METRICS.map((m) => [m.key, eyeScore(existing, x.key, m.key)]))))
+      : eyeDraft()),
     symptoms: existing ? [...existing.symptoms] : [],
     symptomOther: existing?.symptomOther || '',
     urgency: existing?.urgency || null,
@@ -804,7 +829,7 @@ function renderLog(params) {
   const period = periodOf(params.get('period')) ? params.get('period') : defaultPeriod(date);
   if (!ui.draft || ui.draft.date !== date || ui.draft.period !== period) loadDraft(date, period);
   const d = ui.draft;
-  const filled = Object.keys(d.scores).length;
+  const filled = METRICS.filter((m) => d.r[m.key] && d.l[m.key]).length;
   const complete = isDraftComplete(d);
   const guest = !state;
   const missing = filled < METRICS.length ? `Ocenite svih 5 simptoma (${filled}/5)` : 'Izaberite kakvo je stanje';
@@ -827,18 +852,8 @@ function renderLog(params) {
     <div class="grid main-side">
       <div class="stack">
       <div class="card">
-        ${METRICS.map((m) => {
-          const v = d.scores[m.key];
-          return `<div class="metric-row">
-            <div class="metric-name"><span class="emoji">${m.emoji}</span><div><strong>${m.name}</strong><div class="value-label">${v ? m.labels[v - 1] : 'Izaberite ocenu'}</div></div></div>
-            <div>
-              <div class="scale" role="radiogroup" aria-label="${m.name}">
-                ${[1, 2, 3, 4, 5].map((n) => `<button role="radio" aria-checked="${v === n}" class="${v === n ? 'on' : ''}" style="${v === n ? 'background:' + sevColor(severity(m, n)) : ''}" data-action="score" data-metric="${m.key}" data-value="${n}">${n}</button>`).join('')}
-              </div>
-              <div class="scale-ends"><span>${m.labels[0]}</span><span>${m.labels[4]}</span></div>
-            </div>
-          </div>`;
-        }).join('')}
+        <p class="small muted eye-hint">👁️👁️ Ocena važi za <b>oba oka</b>. Ako se oči razlikuju, kliknite „Različito po oku“ kod tog simptoma.</p>
+        ${METRICS.map((m) => metricRow(m, d)).join('')}
       </div>
 
       <div class="card">
@@ -891,6 +906,29 @@ function renderLog(params) {
   return body;
 }
 
+function scaleButtons(m, v, eye) {
+  return `<div class="scale" role="radiogroup" aria-label="${m.name}${eye ? ' – ' + eye.name.toLowerCase() : ''}">
+    ${[1, 2, 3, 4, 5].map((n) => `<button role="radio" aria-checked="${v === n}" class="${v === n ? 'on' : ''}" style="${v === n ? 'background:' + sevColor(severity(m, n)) : ''}" data-action="score" data-metric="${m.key}" data-eye="${eye ? eye.key : 'both'}" data-value="${n}">${n}</button>`).join('')}
+  </div>`;
+}
+
+// Jedan red za oba oka; posle "Različito po oku" po red za desno i levo oko.
+function metricRow(m, d) {
+  const split = d.split.includes(m.key);
+  const v = d.r[m.key];
+  const label = split
+    ? EYES.map((x) => `${x.short}: ${d[x.key][m.key] ? m.labels[d[x.key][m.key] - 1].toLowerCase() : '–'}`).join(' · ')
+    : v ? m.labels[v - 1] : 'Izaberite ocenu';
+  return `<div class="metric-row">
+    <div class="metric-name"><span class="emoji">${m.emoji}</span><div><strong>${m.name}</strong><div class="value-label">${label}</div>
+      <button type="button" class="eye-toggle" data-action="${split ? 'eye-join' : 'eye-split'}" data-metric="${m.key}">${split ? '↺ Isto za oba oka' : '👁️ Različito po oku'}</button></div></div>
+    <div>
+      ${split ? EYES.map((x) => `<div class="eye-scale"><span class="eye-label">${x.name}</span>${scaleButtons(m, d[x.key][m.key], x)}</div>`).join('') : scaleButtons(m, v)}
+      <div class="scale-ends${split ? ' eye-indent' : ''}"><span>${m.labels[0]}</span><span>${m.labels[4]}</span></div>
+    </div>
+  </div>`;
+}
+
 function callButton() {
   return `<a class="btn btn-call" href="tel:${CLINIC.tel}">📞 Pozovite ${CLINIC.phone}</a>`;
 }
@@ -910,8 +948,14 @@ function showClinicModal() {
     <div class="modal-actions"><button class="btn btn-ghost" data-action="close-modal">Nastavi sa unosom</button></div>`);
 }
 
+function rerenderKeepScroll() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
 function isDraftComplete(d) {
-  return METRICS.every((m) => d.scores[m.key]) && !!d.urgency;
+  return METRICS.every((m) => d.r[m.key] && d.l[m.key]) && !!d.urgency;
 }
 
 async function saveEntry() {
@@ -919,7 +963,7 @@ async function saveEntry() {
   const d = ui.draft;
   if (!isDraftComplete(d)) return;
   const before = stats();
-  const fields = { ...d.scores, symptoms: d.symptoms, symptom_other: d.symptoms.includes('other') ? d.symptomOther.trim() || null : null, urgency: d.urgency, note: d.note };
+  const fields = { ...eyeFields(d.r, d.l), symptoms: d.symptoms, symptom_other: d.symptoms.includes('other') ? d.symptomOther.trim() || null : null, urgency: d.urgency, note: d.note };
 
   if (d.id) {
     const row = check(await sb.from('entries').update(fields).eq('id', d.id).select().single());
@@ -1009,7 +1053,8 @@ function renderHistory() {
               <div class="row" style="gap:8px"><span>${p.emoji}</span><strong>${p.name}</strong>${e.retroactive ? '<span class="tag warn">naknadno</span>' : ''}</div>
               <button class="btn btn-ghost btn-sm" data-action="open-log" data-date="${sel}" data-period="${p.key}">Izmeni</button>
             </div>
-            <div class="entry-scores">${METRICS.map((m) => `<div><b style="background:${sevColor(severity(m, e.scores[m.key]))}">${e.scores[m.key]}</b>${m.name.split(' ')[0]}</div>`).join('')}</div>
+            <div class="entry-scores">${METRICS.map((m) => `<div title="${scoreTitle(e, m)}"><b style="background:${sevColor(severity(m, e.scores[m.key]))}">${scoreLabel(e, m)}</b>${m.name.split(' ')[0]}</div>`).join('')}</div>
+            ${METRICS.some((m) => eyesDiffer(e, m.key)) ? '<div class="small muted" style="margin-top:6px">2/3 = desno / levo oko</div>' : ''}
             ${e.urgency || e.symptoms.length ? `<div class="entry-tags">
               ${e.urgency ? `<span class="tag urgency-${e.urgency}">${urgencyOf(e.urgency).icon} ${urgencyOf(e.urgency).name}</span>` : ''}
               ${e.symptoms.map((k) => `<span class="tag">${esc(symptomLabel(e, k))}</span>`).join('')}
@@ -1028,12 +1073,16 @@ function renderHistory() {
 
 /* ---------- Trendovi ---------- */
 
+// Ocena za Trendove prema izabranom oku ("Ukupno" = oko sa više tegoba).
+const trendScore = (e, key) => (ui.trendEye === 'all' ? e.scores[key] : eyeScore(e, ui.trendEye, key));
+const trendSeverity = (e) => METRICS.reduce((sum, m) => sum + severity(m, trendScore(e, m.key)), 0) / METRICS.length;
+
 function dailySeries(days) {
   const map = {};
   for (const e of view().entries) (map[e.date] ||= []).push(e);
   return METRICS.filter((m) => ui.trendMetrics.has(m.key)).map((m) => ({
     metric: m,
-    values: days.map((d) => (map[d] ? avg(map[d].map((e) => e.scores[m.key])) : null)),
+    values: days.map((d) => (map[d] ? avg(map[d].map((e) => trendScore(e, m.key))) : null)),
   }));
 }
 
@@ -1052,7 +1101,10 @@ function renderTrends() {
   const head = `
     <div class="page-head">
       <div><h1>Trendovi</h1><div class="sub">Kako se simptomi menjaju kroz vreme.</div></div>
-      <div class="seg">${[7, 30, 90].map((r) => `<button class="${r === n ? 'on' : ''}" data-action="range" data-value="${r}">${r} dana</button>`).join('')}</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <div class="seg">${[['all', 'Ukupno'], ...EYES.map((x) => [x.key, x.name])].map(([k, name]) => `<button class="${ui.trendEye === k ? 'on' : ''}" data-action="trend-eye" data-value="${k}">${name}</button>`).join('')}</div>
+        <div class="seg">${[7, 30, 90].map((r) => `<button class="${r === n ? 'on' : ''}" data-action="range" data-value="${r}">${r} dana</button>`).join('')}</div>
+      </div>
     </div>`;
 
   if (!inRange.length) {
@@ -1062,8 +1114,8 @@ function renderTrends() {
 
   const daysLogged = new Set(inRange.map((e) => e.date)).size;
   const metricStats = METRICS.map((m) => {
-    const cur = avg(inRange.map((e) => e.scores[m.key]));
-    const prev = avg(prevRange.map((e) => e.scores[m.key]));
+    const cur = avg(inRange.map((e) => trendScore(e, m.key)));
+    const prev = avg(prevRange.map((e) => trendScore(e, m.key)));
     let trend = '';
     if (prev != null) {
       const diff = severity(m, cur) - severity(m, prev);
@@ -1072,7 +1124,7 @@ function renderTrends() {
     }
     return { m, cur, trend };
   });
-  const periodSev = PERIODS.map((p) => ({ p, v: avg(inRange.filter((e) => e.period === p.key).map(entrySeverity)) }));
+  const periodSev = PERIODS.map((p) => ({ p, v: avg(inRange.filter((e) => e.period === p.key).map(trendSeverity)) }));
   const series = dailySeries(days);
 
   return head + `
@@ -1089,7 +1141,7 @@ function renderTrends() {
         <div class="metric-chips">${METRICS.map((m) => `<button class="${ui.trendMetrics.has(m.key) ? 'on' : ''}" data-action="toggle-metric" data-metric="${m.key}"><i style="background:${m.color}"></i>${m.name}</button>`).join('')}</div>
       </div>
       ${series.length ? lineChart(series, days) : '<div class="empty small">Izaberite bar jedan simptom.</div>'}
-      <p class="small muted" style="margin:10px 0 0">Kod jasnoće vida viša ocena je bolja, a kod ostalih simptoma niža.</p>
+      <p class="small muted" style="margin:10px 0 0">Kod jasnoće vida viša ocena je bolja, a kod ostalih simptoma niža.${ui.trendEye === 'all' ? ' „Ukupno“ = oko sa više tegoba.' : ` Prikazano: ${EYES.find((x) => x.key === ui.trendEye).name.toLowerCase()}.`}</p>
     </div>
 
     <div class="grid cols-2">
@@ -1285,7 +1337,9 @@ function researchModal() {
 
 async function researchPreview() {
   const { count, last } = check(await sb.rpc('research_preview'));
-  const sample = last || { pseudonym: '3f9a…(jednosmerni heš)', timestamp: new Date().toISOString(), period: 'morning', scores: { dryness: 3, clarity: 4, fatigue: 2, redness: 1, light: 2 }, eyeCrop: null };
+  const sample = last || { pseudonym: '3f9a…(jednosmerni heš)', timestamp: new Date().toISOString(), period: 'morning', scores: { dryness: 3, clarity: 4, fatigue: 2, redness: 1, light: 2 },
+    eyes: { right: { dryness: 3, clarity: 4, fatigue: 2, redness: 1, light: 2 }, left: { dryness: 2, clarity: 4, fatigue: 2, redness: 1, light: 2 } },
+    symptoms: ['tearing'], urgency: 'usual', eyeCrop: null };
   const intro = last
     ? `Do sada podeljeno zapisa: <b>${count}</b>. Ovo je poslednji:`
     : state.research.optIn ? 'Još niste podelili nijedan zapis. Ovako će izgledati:' : 'Trenutno ne delite ništa. Ovako bi izgledao jedan zapis:';
@@ -1448,10 +1502,23 @@ const actions = {
     location.replace(`#/log?date=${date}&period=${el.dataset.period}`);
   },
   score(el) {
-    ui.draft.scores[el.dataset.metric] = Number(el.dataset.value);
-    const y = window.scrollY;
-    render();
-    window.scrollTo(0, y);
+    const { metric, eye } = el.dataset;
+    const v = Number(el.dataset.value);
+    if (eye === 'both') { ui.draft.r[metric] = v; ui.draft.l[metric] = v; } else ui.draft[eye][metric] = v;
+    rerenderKeepScroll();
+  },
+  'eye-split'(el) {
+    ui.draft.split.push(el.dataset.metric);
+    rerenderKeepScroll();
+  },
+  // Spajanje: obe ocene postaju ocena oka sa više tegoba.
+  'eye-join'(el) {
+    const d = ui.draft, k = el.dataset.metric;
+    const m = METRICS.find((x) => x.key === k);
+    const v = d.r[k] && d.l[k] ? worseEye(m, d.r[k], d.l[k]) : d.r[k] || d.l[k];
+    if (v) { d.r[k] = v; d.l[k] = v; }
+    d.split = d.split.filter((x) => x !== k);
+    rerenderKeepScroll();
   },
   'save-entry'() { return saveEntry(); },
   async 'report-download'() {
@@ -1532,6 +1599,7 @@ const actions = {
   'cal-prev'() { ui.calMonth = new Date(ui.calMonth.getFullYear(), ui.calMonth.getMonth() - 1, 1); render(); },
   'cal-next'() { ui.calMonth = new Date(ui.calMonth.getFullYear(), ui.calMonth.getMonth() + 1, 1); render(); },
   range(el) { ui.range = Number(el.dataset.value); render(); },
+  'trend-eye'(el) { ui.trendEye = el.dataset.value; render(); },
   'toggle-metric'(el) {
     const k = el.dataset.metric;
     ui.trendMetrics.has(k) ? ui.trendMetrics.delete(k) : ui.trendMetrics.add(k);
